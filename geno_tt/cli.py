@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from .config import load_config, resolve_host, SESSIONS_DIR
-from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_repos, list_worktrees, add_worktree, remove_worktree, LOCAL_HOSTNAME
+from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_repos, list_worktrees, add_worktree, remove_worktree, discover_owner_repos, clone_repos, workspace_repo_remotes, spawn_layout, LOCAL_HOSTNAME
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
 from .iterm2 import is_iterm2, should_use_control_mode, should_open_new_tab, emit_pre_connect_sequences
@@ -116,19 +116,23 @@ def _color_for_group(group: str) -> str:
     return ""
 
 
-def _repos_data(config):
+def _repos_data(config, all_hosts: bool = False):
     """Load all repos with metadata for the target host(s).
 
     Returns (alias, hostname, repos_list) where repos_list is:
     [{"idx": int, "path": str, "leaf": str, "group": str,
       "session_count": int, "age": str, "age_days": int}]
+    With all_hosts=True, scans every configured host (used by `tt report`).
     """
     from collections import OrderedDict
     from datetime import datetime, timezone
 
     hosts = config.get("hosts", {})
     default_alias = config.get("default_host")
-    target_aliases = [default_alias] if default_alias else sorted(hosts)[:1]
+    if all_hosts:
+        target_aliases = sorted(hosts)
+    else:
+        target_aliases = [default_alias] if default_alias else sorted(hosts)[:1]
 
     results = []
     for alias in target_aliases:
@@ -818,6 +822,31 @@ def cmd_wt(args, config):
                 days = (datetime.now(timezone.utc) - datetime.fromtimestamp(w["mtime"], timezone.utc)).days
                 age = "today" if days == 0 else f"{days}d ago"
             print(f"  {w['name']}  {_DIM}{age}{_RESET}")
+        return
+
+    if action == "fanout":
+        import shlex
+        try:
+            count = int(name)
+        except (TypeError, ValueError):
+            raise SystemExit("Usage: tt wt fanout <N> <prompt…>")
+        prompt = " ".join(getattr(args, "rest", []) or [])
+        repos = list_workspace_repos(host, ws_abs)
+        if not repos:
+            raise SystemExit(f"No git repos in workspace {label}.")
+        started = []
+        for i in range(1, count + 1):
+            wname = f"fanout-{i}"
+            try:
+                root = add_worktree(host, ws_abs, wname, repos)
+            except Exception as e:
+                raise SystemExit(f"git worktree failed: {getattr(e, 'stderr', '') or e}")
+            agent = "claude" + (f" {shlex.quote(prompt)}" if prompt else "")
+            spawn_layout(host, root, f"{label.split('.')[0]}-{wname}", 1, 0, agent_cmd=agent)
+            started.append(wname)
+        print(f"Fanned out {len(started)} worktree(s) in {label}, each running an agent:")
+        for w in started:
+            print(f"  {_DIM}└{_RESET} {w}  (tmux: {label.split('.')[0]}-{w})")
         return
 
     if not name:
@@ -1530,7 +1559,95 @@ def cmd_code(args, config):
     subprocess.Popen(["code", "--folder-uri", uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-SUBCOMMANDS = {"ls", "kill", "new", "new-project", "wt", "code", "repos", "inv", "clean", "recover", "tui", "hosts", "default", "add-host", "profile", "theme"}
+def cmd_report(args, config):
+    """Cross-host inventory: render the scheme tree for every configured host."""
+    if not config.get("hosts"):
+        print("No hosts configured. Use tt add-host first.")
+        return
+    results = _repos_data(config, all_hosts=True)
+    if not sys.stdout.isatty():
+        _repos_plain(results)
+        return
+    for one in results:
+        _repos_inv([one], expand=getattr(args, "expand", False))
+
+
+def cmd_ecosystem_clone(args, config):
+    """Clone every <prefix>* repo under a GitHub owner into one workspace.
+
+    tt ecosystem-clone <owner> <domain> [--track side] [--prefix P] [-H host]
+    Workspace: <track>/<domain>/ecosystem.<born>/  (one repo dir per repo).
+    """
+    alias, hostname = resolve_host(config)
+    owner, domain = args.owner, args.domain
+    track = args.track if args.track in TRACKS else "side"
+    prefix = args.prefix or domain
+    print(f"Discovering {owner}/{prefix}* …")
+    names = discover_owner_repos(owner, prefix)
+    if not names:
+        raise SystemExit(f"No repos matching {prefix}* under {owner}.")
+    born = _current_quarter()
+    home = get_remote_home(hostname)
+    ws_abs = f"{home}/code/{track}/{domain}/ecosystem.{born}"
+    urls = {n: f"https://github.com/{owner}/{n}.git" for n in names}
+    print(f"Cloning {len(names)} repo(s) into {alias}:{ws_abs} …")
+    res = clone_repos(hostname, ws_abs, urls)
+    ok = sum(1 for _, s in res if s in ("ok", "remote", "skip"))
+    print(f"  {ok}/{len(res)} present.  workspace: {track}/{domain}/ecosystem.{born}")
+    if hostname == LOCAL_HOSTNAME:
+        _emit_cd(ws_abs)
+
+
+def cmd_mirror(args, config):
+    """Replicate a workspace's repos onto another configured host.
+
+    tt mirror <workspace> <host>   (source = default/-H host; target = <host>)
+    """
+    src_alias, src_host = resolve_host(config)
+    hosts = config.get("hosts", {})
+    target = args.host
+    target_host = hosts.get(target, target)
+    src_ws = _detect_workspace() if not args.workspace else None
+    if src_ws:
+        ws_abs, label = src_ws, Path(src_ws).name
+    else:
+        spec = args.workspace or args.workspace_pos
+        ws_abs, label = _resolve_workspace(src_host, spec, config)
+    remotes = workspace_repo_remotes(src_host, ws_abs)
+    if not remotes:
+        raise SystemExit(f"No repos with remotes found in {label}.")
+    # same scheme-relative path on the target
+    src_home = get_remote_home(src_host)
+    rel = ws_abs[len(src_home) + 1:] if ws_abs.startswith(src_home) else ws_abs
+    tgt_home = get_remote_home(target_host)
+    tgt_abs = f"{tgt_home}/{rel}"
+    print(f"Mirroring {len(remotes)} repo(s): {src_alias}:{label} → {target}:{rel}")
+    clone_repos(target_host, tgt_abs, remotes)
+    print(f"  done → {target}:{tgt_abs}")
+
+
+def cmd_spawn(args, config):
+    """Open a multi-pane tmux session in a workspace (N agents + M shells).
+
+    tt spawn <workspace> [--agents N] [--shells M] [-H host]
+    """
+    alias, hostname = resolve_host(config)
+    local_ws = _detect_workspace()
+    if local_ws and not args.workspace_pos:
+        ws_abs, label = local_ws, Path(local_ws).name
+        hostname = LOCAL_HOSTNAME
+    else:
+        ws_abs, label = _resolve_workspace(hostname, args.workspace_pos, config)
+    session = f"ws-{label.split('.')[0]}"
+    n, m = args.agents, args.shells
+    print(f"Spawning session '{session}' in {alias}:{label}  ({n} agent + {m} shell panes)")
+    spawn_layout(hostname, ws_abs, session, n, m)
+    print(f"  attach: tt {session}")
+
+
+SUBCOMMANDS = {"ls", "kill", "new", "new-project", "wt", "code", "repos", "inv", "report",
+               "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
+               "default", "add-host", "profile", "theme"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1655,6 +1772,34 @@ def main(argv: list[str] | None = None) -> int:
         iargs = ip.parse_args(argv[1:])
         cmd_inv(iargs, config)
 
+    elif cmd == "report":
+        rp = argparse.ArgumentParser(prog="tt report", add_help=False)
+        rp.add_argument("--all-hosts", action="store_true")
+        rp.add_argument("--expand", "-e", action="store_true")
+        cmd_report(rp.parse_args(argv[1:]), config)
+
+    elif cmd == "ecosystem-clone":
+        ep = argparse.ArgumentParser(prog="tt ecosystem-clone", add_help=False)
+        ep.add_argument("owner")
+        ep.add_argument("domain")
+        ep.add_argument("--track", default="side")
+        ep.add_argument("--prefix", default=None)
+        cmd_ecosystem_clone(ep.parse_args(argv[1:]), config)
+
+    elif cmd == "mirror":
+        mp = argparse.ArgumentParser(prog="tt mirror", add_help=False)
+        mp.add_argument("workspace_pos", nargs="?", default=None)
+        mp.add_argument("host")
+        mp.add_argument("-w", "--workspace", default=None)
+        cmd_mirror(mp.parse_args(argv[1:]), config)
+
+    elif cmd == "spawn":
+        sp = argparse.ArgumentParser(prog="tt spawn", add_help=False)
+        sp.add_argument("workspace_pos", nargs="?", default=None)
+        sp.add_argument("--agents", type=int, default=1)
+        sp.add_argument("--shells", type=int, default=1)
+        cmd_spawn(sp.parse_args(argv[1:]), config)
+
     elif cmd == "new-project":
         if len(argv) < 2:
             raise SystemExit("Usage: tt new-project <track>.<domain>.<workspace>")
@@ -1664,6 +1809,7 @@ def main(argv: list[str] | None = None) -> int:
         wp = argparse.ArgumentParser(prog="tt wt", add_help=False)
         wp.add_argument("action", nargs="?", default="ls")
         wp.add_argument("name", nargs="?", default=None)
+        wp.add_argument("rest", nargs=argparse.REMAINDER)
         wp.add_argument("-w", "--workspace", default=None)
         wargs = wp.parse_args(argv[1:])
         cmd_wt(wargs, config)

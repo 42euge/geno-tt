@@ -591,3 +591,110 @@ def find_repo(hostname: str, name: str, config: dict | None = None) -> str | Non
     if len(matches) > 1:
         return None
     return None
+
+
+# ── higher-level: ecosystem-clone / mirror / spawn ───────────────────────────
+
+def discover_owner_repos(owner: str, prefix: str) -> list[str]:
+    """Repo names under a GitHub owner starting with `prefix` (public, no token).
+
+    Uses `gh` if present, else the unauthenticated public GitHub API.
+    """
+    import json as _json
+    import shutil
+    import urllib.request
+    names: set[str] = set()
+    if shutil.which("gh"):
+        r = subprocess.run(["gh", "repo", "list", owner, "--limit", "500", "--json", "name"],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            names = {x["name"] for x in _json.loads(r.stdout)}
+    if not names:
+        page = 1
+        while True:
+            req = urllib.request.Request(
+                f"https://api.github.com/users/{owner}/repos?per_page=100&page={page}",
+                headers={"Accept": "application/vnd.github+json"})
+            data = _json.load(urllib.request.urlopen(req, timeout=15))
+            names |= {x["name"] for x in data}
+            if len(data) < 100:
+                break
+            page += 1
+    return sorted(n for n in names if n.startswith(prefix))
+
+
+def clone_repos(hostname: str, ws_abs: str, urls: dict) -> list[tuple]:
+    """Clone {repo_name: clone_url} into ws_abs/<name> (local or remote, parallel).
+
+    Skips repos already present. Returns [(name, status)]. Remotes stay clean
+    (no token injected — geno-* repos are public).
+    """
+    import shlex
+    if _is_local(hostname):
+        Path(ws_abs).mkdir(parents=True, exist_ok=True)
+        out = []
+        procs = []
+        for name, url in urls.items():
+            dest = Path(ws_abs) / name
+            if (dest / ".git").exists():
+                out.append((name, "skip"))
+                continue
+            procs.append((name, subprocess.Popen(
+                ["git", "clone", "-q", url, str(dest)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)))
+            if len(procs) >= 8:
+                for n, p in procs:
+                    out.append((n, "ok" if p.wait() == 0 else "fail"))
+                procs = []
+        for n, p in procs:
+            out.append((n, "ok" if p.wait() == 0 else "fail"))
+        return out
+    # remote: one ssh script that mkdir + clones (sequential, quiet)
+    lines = [f"mkdir -p {shlex.quote(ws_abs)}"]
+    for name, url in urls.items():
+        d = shlex.quote(f"{ws_abs}/{name}")
+        lines.append(f'[ -d {d}/.git ] || git clone -q {shlex.quote(url)} {d}')
+    lines.append(f'ls -d {shlex.quote(ws_abs)}/*/ 2>/dev/null | wc -l')
+    res = _ssh_run(hostname, "\n".join(lines))
+    return [(n, "remote") for n in urls]
+
+
+def workspace_repo_remotes(hostname: str, ws_abs: str) -> dict:
+    """Map {repo_name: origin_url} for the git repos in a workspace (local/remote)."""
+    repos = list_workspace_repos(hostname, ws_abs)
+    out = {}
+    if _is_local(hostname):
+        for r in repos:
+            cp = subprocess.run(["git", "-C", str(Path(ws_abs) / r), "remote", "get-url", "origin"],
+                                capture_output=True, text=True)
+            if cp.returncode == 0:
+                out[r] = cp.stdout.strip()
+        return out
+    import shlex
+    for r in repos:
+        cp = _ssh_run(hostname, f"git -C {shlex.quote(ws_abs + '/' + r)} remote get-url origin")
+        url = cp.stdout.strip()
+        if url:
+            out[r] = url
+    return out
+
+
+def spawn_layout(hostname: str, folder: str, session: str, n_agents: int, m_shells: int,
+                 agent_cmd: str = "claude") -> str:
+    """Create a detached tmux session in `folder` with n_agents + m_shells tiled
+    panes; the first n_agents panes launch `agent_cmd`. Returns the session name."""
+    import shlex
+    total = max(1, n_agents + m_shells)
+    q = shlex.quote(folder)
+    lines = [f"tmux new-session -d -s {shlex.quote(session)} -c {q}"]
+    for _ in range(total - 1):
+        lines.append(f"tmux split-window -t {shlex.quote(session)} -c {q}")
+        lines.append(f"tmux select-layout -t {shlex.quote(session)} tiled")
+    for i in range(n_agents):
+        lines.append(f"tmux send-keys -t {shlex.quote(session)}.{i} {shlex.quote(agent_cmd)} C-m")
+    script = " ; ".join(lines)
+    if _is_local(hostname):
+        subprocess.run(["bash", "-lc", script], capture_output=True)
+    else:
+        _ssh_run(hostname, script)
+    return session
