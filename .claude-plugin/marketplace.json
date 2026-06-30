@@ -1,0 +1,16 @@
+{
+  "name": "geno-tt",
+  "owner": { "name": "42euge", "url": "https://github.com/42euge" },
+  "plugins": [
+    {
+      "name": "geno-tt",
+      "source": "./",
+      "description": "Terminal/session + workspace manager — the tt CLI",
+      "version": "0.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/42euge/geno-tt",
+      "repository": "https://github.com/42euge/geno-tt",
+      "keywords": ["tmux", "workspaces", "worktrees", "geno-ecosystem"]
+    }
+  ]
+}

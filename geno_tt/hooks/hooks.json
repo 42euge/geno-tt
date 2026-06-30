@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/geno_tt/scripts/bootstrap.sh",
+            "timeout": 30000
+          }
+        ]
+      }
+    ]
+  }
+}
