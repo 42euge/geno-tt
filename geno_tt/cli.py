@@ -892,6 +892,115 @@ def cmd_wt(args, config):
         raise SystemExit(f"Unknown wt action '{action}'. Use new|ls|cd|rm.")
 
 
+def cmd_iterm(args, config):
+    """iTerm2 orchestration: tt iterm ls|group|sort|name|resume|fork."""
+    action = getattr(args, "action", None) or "ls"
+    name = getattr(args, "name", None)
+    rest = getattr(args, "rest", []) or []
+    from . import iterm_api as ia  # lazy: orchestration needs the optional extra
+
+    if action == "ls":
+        sessions = ia.list_sessions()
+        cur_win = None
+        for s in sessions:
+            if s["window_id"] != cur_win:
+                cur_win = s["window_id"]
+                print(f"{_BOLD}window {s['win_index'] + 1}{_RESET} {_DIM}({cur_win}){_RESET}")
+            nm = s["name"] or "?"
+            job = s["job"] or "-"
+            print(f"  {nm:<34} {_DIM}{s['tty']:<12} {job:<12} {s['cwd']}{_RESET}")
+
+    elif action == "group":
+        dry = "--dry-run" in rest
+        labels = ia.group_by_project(prefix_depth=1, dry_run=dry)
+        verb = "would group" if dry else "grouped"
+        for prog, names in sorted(labels.items()):
+            print(f"{_BOLD}{prog}{_RESET} {_DIM}({len(names)} tabs){_RESET}: {', '.join(names)}")
+        print(f"{_DIM}{verb} {sum(len(v) for v in labels.values())} tabs into "
+              f"{len(labels)} window(s).{_RESET}")
+
+    elif action == "sort":
+        sp = argparse.ArgumentParser(prog="tt iterm sort", add_help=False)
+        sp.add_argument("--by", default="date")
+        sp.add_argument("--pin", default=None)
+        sp.add_argument("--window", default=None, help="window id (default: current)")
+        sa = sp.parse_args(rest)
+        from . import claude_sessions as cs
+        sessions = ia.list_sessions()
+        target = sa.window or (_win_of_current(sessions))
+        if not target:
+            raise SystemExit("Could not resolve target window; pass --window <id>.")
+        # newest-human-turn first; unknown cwd sorts last
+        ranked = []
+        for s in sessions:
+            if s["window_id"] != target:
+                continue
+            ts = max((cs.session_last_interaction(s["cwd"]) or {}).values(), default=0.0)
+            ranked.append((ts, s["session_id"]))
+        ranked.sort(reverse=True)
+        n = ia.order_window(target, [sid for _, sid in ranked], pin=sa.pin)
+        print(f"Ordered {n} tabs in window {target} by {sa.by}"
+              + (f", pinned '{sa.pin}'." if sa.pin else "."))
+
+    elif action == "name":
+        if not name or not rest:
+            raise SystemExit("Usage: tt iterm name <tty|sel> <dotname>")
+        dotname = rest[0]
+        sid = ia.current_session_id() if name == "sel" else ia.session_id_for_tty(name)
+        if not sid:
+            raise SystemExit(f"No session for '{name}'.")
+        ia.set_session_name(sid, dotname)
+        print(f"Named {name} → {dotname}  {_DIM}(holds while idle; Claude re-titles on activity){_RESET}")
+
+    elif action == "resume":
+        rp = argparse.ArgumentParser(prog="tt iterm resume", add_help=False)
+        rp.add_argument("--dry-run", action="store_true")
+        rp.add_argument("--min-score", type=float, default=2.0)
+        ra = rp.parse_args(rest)
+        from . import claude_sessions as cs
+        sessions = ia.list_sessions()
+        plan = []
+        for s in sessions:
+            if (s["job"] or "").startswith(("claude", "node")):
+                continue  # already running something
+            scroll = ia.get_scrollback(s["session_id"])
+            ranked = cs.match_scrollback_to_session(scroll, s["cwd"])
+            if ranked and ranked[0][1] >= ra.min_score:
+                plan.append((s, ranked[0][0], ranked[0][1]))
+        for s, uuid, score in plan:
+            print(f"  {s['tty']:<12} → {uuid[:8]}  {_DIM}(score {score:.1f}){_RESET}")
+        if not plan:
+            print(f"{_DIM}No confident matches (>= {ra.min_score}).{_RESET}")
+        elif ra.dry_run:
+            print(f"{_DIM}--dry-run: {len(plan)} would resume.{_RESET}")
+        else:
+            for s, uuid, _ in plan:
+                ia.resume_in_session(s["session_id"], uuid)
+            print(f"Resumed {len(plan)} session(s).")
+
+    elif action == "fork":
+        uuid = name or ia.current_session_id()
+        cur = ia.current_session_id()
+        if not cur:
+            raise SystemExit("Not inside an iTerm2 session (no $ITERM_SESSION_ID).")
+        new = ia.split_and_resume(cur, uuid, vertical=True, name="fork")
+        print(f"Forked side pane {new} resuming {uuid[:8]}." if new else "Split failed.")
+
+    else:
+        raise SystemExit(f"Unknown iterm action '{action}'. Use ls|group|sort|name|resume|fork.")
+
+
+def _win_of_current(sessions: list[dict]) -> str | None:
+    """Resolve the window id containing the current session ($ITERM_SESSION_ID)."""
+    import os as _os
+    sid = _os.environ.get("ITERM_SESSION_ID", "")
+    uuid = sid.split(":", 1)[1] if ":" in sid else None
+    for s in sessions:
+        if uuid and s["session_id"] == uuid:
+            return s["window_id"]
+    return sessions[0]["window_id"] if sessions else None
+
+
 def cmd_ls(args, config):
     """List all tmux sessions as a tree."""
     host_alias = getattr(args, "host_alias", None)
@@ -1645,7 +1754,7 @@ def cmd_spawn(args, config):
     print(f"  attach: tt {session}")
 
 
-SUBCOMMANDS = {"ls", "kill", "new", "new-project", "wt", "code", "repos", "inv", "report",
+SUBCOMMANDS = {"ls", "kill", "new", "new-project", "wt", "iterm", "code", "repos", "inv", "report",
                "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
                "default", "add-host", "profile", "theme"}
 
@@ -1729,6 +1838,8 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
         print("                       Whole-workspace worktrees; -w + -H to drive a remote host")
         print("  tt wt fanout <N> <prompt…>   N worktrees, an agent in each")
+        print("  tt iterm ls|group|sort|name|resume|fork")
+        print("                       Orchestrate iTerm2 windows/tabs (Python API)")
         print("  tt report [--all-hosts]      Cross-host inventory tree")
         print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
         print("                       Clone every <prefix>* repo under a GitHub owner into a workspace")
@@ -1820,6 +1931,14 @@ def main(argv: list[str] | None = None) -> int:
         wp.add_argument("-w", "--workspace", default=None)
         wargs = wp.parse_args(argv[1:])
         cmd_wt(wargs, config)
+
+    elif cmd == "iterm":
+        ip = argparse.ArgumentParser(prog="tt iterm", add_help=False)
+        ip.add_argument("action", nargs="?", default="ls")
+        ip.add_argument("name", nargs="?", default=None)
+        ip.add_argument("rest", nargs=argparse.REMAINDER)
+        iargs = ip.parse_args(argv[1:])
+        cmd_iterm(iargs, config)
 
     elif cmd == "kill":
         if len(argv) < 2:

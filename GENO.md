@@ -36,8 +36,25 @@ started (never moves); whole-workspace worktrees live in a hidden `.wt/`.
 | hosts | `list` `add` `default` |
 | repos | `list` `code` |
 | appearance | `theme` `profile` |
+| iterm | `ls` `group` `sort` `name` `resume` `fork` |
 
 Skills are named path-mirrored: `geno-tt-<category>-<name>`.
+
+## iTerm2 orchestration (the authoritative layer)
+
+`tt iterm` is the canonical way to drive iTerm2 windows/tabs/sessions: list them,
+group tabs into one window per project (by dot-notation name), order tabs by when
+each was last worked, name sessions, split-and-fork a Claude session, and re-attach
+idle tabs to their Claude conversations by matching scrollback to `~/.claude`
+history. It talks to the **iTerm2 Python API** (unlike the AppleScript/escape-code
+helpers in `iterm2.py`), so it needs the optional `orchestration` extra:
+
+```
+pipx inject geno-tt iterm2        # or: pip install 'geno-tt[orchestration]'
+```
+
+plus iTerm2 ▸ Settings ▸ General ▸ Magic ▸ **Enable Python API**. The core CLI stays
+dependency-free; `tt iterm` prints this hint if the extra or API is missing.
 
 ## Repo structure
 
