@@ -949,8 +949,35 @@ def cmd_iterm(args, config):
         sid = ia.current_session_id() if name == "sel" else ia.session_id_for_tty(name)
         if not sid:
             raise SystemExit(f"No session for '{name}'.")
-        ia.set_session_name(sid, dotname)
-        print(f"Named {name} → {dotname}  {_DIM}(holds while idle; Claude re-titles on activity){_RESET}")
+        # tab-title override: sticky, beats Claude's live re-titling
+        ia.set_tab_title(sid, dotname)
+        print(f"Named {name} → {dotname}")
+
+    elif action == "new-task":
+        if not name:
+            raise SystemExit("Usage: tt iterm new-task <name>")
+        wid = ia.new_task(name)
+        print(f"Opened task window '{name}' with an orchestrator "
+              f"({_DIM}{wid}{_RESET}).")
+        print(f"{_DIM}It will spawn dot-named tabs as needs surface: "
+              f"tt iterm tab {name}.<aspect> --claude{_RESET}")
+
+    elif action == "tab":
+        if not name:
+            raise SystemExit("Usage: tt iterm tab <name.aspect> [--claude | --cmd \"…\"]")
+        tp = argparse.ArgumentParser(prog="tt iterm tab", add_help=False)
+        tp.add_argument("--claude", action="store_true")
+        tp.add_argument("--cmd", default=None)
+        ta = tp.parse_args(rest)
+        cmd = "clauded" if ta.claude else ta.cmd
+        ia.add_tab(name, cmd)
+        print(f"Added tab '{name}'" + (f" running: {cmd}" if cmd else "") + ".")
+
+    elif action == "window":
+        if not name:
+            raise SystemExit("Usage: tt iterm window <title>")
+        ia.set_window_title(" ".join([name] + rest))
+        print(f"Window titled '{name}'.")
 
     elif action == "resume":
         rp = argparse.ArgumentParser(prog="tt iterm resume", add_help=False)
@@ -1049,7 +1076,8 @@ def cmd_iterm(args, config):
 
     else:
         raise SystemExit(
-            f"Unknown iterm action '{action}'. Use ls|group|sort|name|reg|focus|resume|fork.")
+            f"Unknown iterm action '{action}'. "
+            "Use ls|group|sort|name|window|reg|focus|new-task|tab|resume|fork.")
 
 
 def _win_of_current(sessions: list[dict]) -> str | None:
@@ -1900,8 +1928,10 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
         print("                       Whole-workspace worktrees; -w + -H to drive a remote host")
         print("  tt wt fanout <N> <prompt…>   N worktrees, an agent in each")
-        print("  tt iterm ls|group|sort|name|resume|fork")
+        print("  tt iterm ls|group|sort|name|window|resume|fork")
         print("                       Orchestrate iTerm2 windows/tabs (Python API)")
+        print("  tt iterm new-task <name>     New window + Claude orchestrator for a task")
+        print("  tt iterm tab <name.aspect> [--claude]   Add a dot-named tab (orchestrator fan-out)")
         print("  tt report [--all-hosts]      Cross-host inventory tree")
         print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
         print("                       Clone every <prefix>* repo under a GitHub owner into a workspace")
