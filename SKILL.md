@@ -7,7 +7,7 @@ description: >-
 allowed-tools: "Bash(tt *) Bash(python3 -m geno_tt *)"
 metadata:
   author: 42euge
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # geno-tt — terminal/session + workspace manager
@@ -31,7 +31,7 @@ the `tt` binary.
 | **hosts/** | `list` · `add` · `default` |
 | **repos/** | `list` · `code` |
 | **appearance/** | `theme` · `profile` |
-| **iterm/** | `ls` · `group` · `sort` · `name` · `resume` · `fork` |
+| **iterm/** | `ls` · `group` · `sort` · `name` · `window` · `new-task` · `tab` · `resume` · `fork` |
 
 ## CLI
 
