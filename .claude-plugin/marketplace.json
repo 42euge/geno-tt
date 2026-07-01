@@ -5,8 +5,8 @@
     {
       "name": "geno-tt",
       "source": "./",
-      "description": "Terminal/session + workspace manager — the tt CLI",
-      "version": "0.1.0",
+      "description": "Terminal/session + workspace manager + iTerm2 orchestrator — the tt CLI",
+      "version": "0.3.0",
       "license": "MIT",
       "homepage": "https://github.com/42euge/geno-tt",
       "repository": "https://github.com/42euge/geno-tt",
