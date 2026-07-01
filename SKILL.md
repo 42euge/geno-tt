@@ -7,7 +7,7 @@ description: >-
 allowed-tools: "Bash(tt *) Bash(python3 -m geno_tt *)"
 metadata:
   author: 42euge
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # geno-tt — terminal/session + workspace manager
@@ -31,6 +31,7 @@ the `tt` binary.
 | **hosts/** | `list` · `add` · `default` |
 | **repos/** | `list` · `code` |
 | **appearance/** | `theme` · `profile` |
+| **iterm/** | `ls` · `group` · `sort` · `name` · `resume` · `fork` |
 
 ## CLI
 
@@ -39,6 +40,7 @@ the `tt` binary.
 - `tt wt new|ls|cd|rm <name> [-w WS] [-H <host>]` — whole-workspace worktrees
 - `tt ls | <target> | kill | clean | recover | tui` — remote tmux sessions
 - `tt repos | code | hosts | add-host | default | theme | profile`
+- `tt iterm ls|group|sort|name|resume|fork` — orchestrate iTerm2 (Python API; `[orchestration]` extra)
 
 Hosts are never hardcoded — remote targets resolve from the `[hosts]` table in
 `~/.geno/tt/config.toml`. Config + state live under `~/.geno/tt/`.
