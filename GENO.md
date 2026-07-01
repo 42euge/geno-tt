@@ -36,7 +36,7 @@ started (never moves); whole-workspace worktrees live in a hidden `.wt/`.
 | hosts | `list` `add` `default` |
 | repos | `list` `code` |
 | appearance | `theme` `profile` |
-| iterm | `ls` `group` `sort` `name` `resume` `fork` |
+| iterm | `ls` `group` `sort` `name` `window` `new-task` `tab` `resume` `fork` |
 
 Skills are named path-mirrored: `geno-tt-<category>-<name>`.
 
