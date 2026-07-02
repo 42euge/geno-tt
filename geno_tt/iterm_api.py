@@ -113,11 +113,25 @@ def list_tabs() -> list[dict]:
                 out.append({
                     "title": (await t.async_get_variable("title")) or "",
                     "tty": (await s0.async_get_variable("tty")) or "",
+                    "cwd": (await s0.async_get_variable("path")) or "",
                     "session_id": s0.session_id,
                     "window_id": w.window_id,
                 })
         return out
     return _run(_impl)
+
+
+def activate(session_id: str) -> bool:
+    """Bring a session's tab to the front (explicit focus — the one place we DO
+    activate). Selects the tab and orders its window front."""
+    async def _impl(iterm2, conn):
+        app = await iterm2.async_get_app(conn)
+        s = app.get_session_by_id(session_id)
+        if not s:
+            return False
+        await s.async_activate(select_tab=True, order_window_front=True)
+        return True
+    return bool(_run(_impl))
 
 
 def get_scrollback(session_id: str, max_lines: int = 1200) -> str:

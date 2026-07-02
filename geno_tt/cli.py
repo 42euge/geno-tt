@@ -997,7 +997,8 @@ def cmd_iterm(args, config):
                 if "." not in title:
                     continue  # only dot-notation tabs are registry nodes
                 registry.node(reg, title)["iterm"] = {
-                    "tty": t.get("tty", ""), "window_id": t.get("window_id", "")}
+                    "tty": t.get("tty", ""), "cwd": t.get("cwd", ""),
+                    "window_id": t.get("window_id", "")}
                 n += 1
             registry.save(reg)
             print(f"pulled {n} iTerm tab(s) → {registry.PATH}")
@@ -1014,9 +1015,28 @@ def cmd_iterm(args, config):
                     surf.append(f"chrome:{len(node['chrome'].get('urls', []))}t/{node['chrome'].get('color','')}")
                 print(f"  {_BOLD}{path}{_RESET}  {_DIM}[{' · '.join(surf) or 'no surfaces'}]{_RESET}")
 
+    elif action == "focus":
+        if not name:
+            raise SystemExit("Usage: tt iterm focus <node>   (object-notation path)")
+        # iTerm side: activate the tab whose title matches the node
+        hit = [t for t in ia.list_tabs()
+               if t["title"].lstrip("✳⠂⠐⠠ ").strip() == name]
+        if hit:
+            ia.activate(hit[0]["session_id"])
+            print(f"focused iTerm tab {_BOLD}{name}{_RESET}")
+        else:
+            print(f"{_DIM}no iTerm tab titled '{name}'{_RESET}")
+        # cross-surface: raise the Chrome group for this node via geno-surf, if present
+        import shutil, subprocess
+        if shutil.which("surf"):
+            r = subprocess.run(["surf", "focus", name], capture_output=True, text=True)
+            out = (r.stdout or r.stderr).strip().splitlines()
+            if out:
+                print(f"  {_DIM}surf: {out[-1]}{_RESET}")
+
     else:
         raise SystemExit(
-            f"Unknown iterm action '{action}'. Use ls|group|sort|name|reg|resume|fork.")
+            f"Unknown iterm action '{action}'. Use ls|group|sort|name|reg|focus|resume|fork.")
 
 
 def _win_of_current(sessions: list[dict]) -> str | None:
