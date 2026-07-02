@@ -986,8 +986,37 @@ def cmd_iterm(args, config):
         new = ia.split_and_resume(cur, uuid, vertical=True, name="fork")
         print(f"Forked side pane {new} resuming {uuid[:8]}." if new else "Split failed.")
 
+    elif action == "reg":
+        from . import registry
+        sub = name or "show"  # `tt iterm reg pull` → pull lands in `name`
+        if sub == "pull":
+            reg = registry.load()
+            n = 0
+            for t in ia.list_tabs():
+                title = (t.get("title") or "").lstrip("✳⠂⠐⠠ ").strip()
+                if "." not in title:
+                    continue  # only dot-notation tabs are registry nodes
+                registry.node(reg, title)["iterm"] = {
+                    "tty": t.get("tty", ""), "window_id": t.get("window_id", "")}
+                n += 1
+            registry.save(reg)
+            print(f"pulled {n} iTerm tab(s) → {registry.PATH}")
+        else:  # show — the unified cross-surface view
+            reg = registry.load()
+            nodes = reg.get("nodes", {})
+            if not nodes:
+                print(f"{_DIM}registry empty ({registry.PATH}){_RESET}")
+            for path, node in sorted(nodes.items()):
+                surf = []
+                if "iterm" in node:
+                    surf.append(f"iterm:{node['iterm'].get('tty','?')}")
+                if "chrome" in node:
+                    surf.append(f"chrome:{len(node['chrome'].get('urls', []))}t/{node['chrome'].get('color','')}")
+                print(f"  {_BOLD}{path}{_RESET}  {_DIM}[{' · '.join(surf) or 'no surfaces'}]{_RESET}")
+
     else:
-        raise SystemExit(f"Unknown iterm action '{action}'. Use ls|group|sort|name|resume|fork.")
+        raise SystemExit(
+            f"Unknown iterm action '{action}'. Use ls|group|sort|name|reg|resume|fork.")
 
 
 def _win_of_current(sessions: list[dict]) -> str | None:

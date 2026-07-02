@@ -101,6 +101,25 @@ def list_sessions() -> list[dict]:
     return _run(_impl)
 
 
+def list_tabs() -> list[dict]:
+    """One entry per tab: its (sticky) title + a representative tty/session/window.
+    The tab title carries the dot-notation object path used by the registry."""
+    async def _impl(iterm2, conn):
+        app = await iterm2.async_get_app(conn)
+        out = []
+        for w in app.windows:
+            for t in w.tabs:
+                s0 = t.sessions[0]
+                out.append({
+                    "title": (await t.async_get_variable("title")) or "",
+                    "tty": (await s0.async_get_variable("tty")) or "",
+                    "session_id": s0.session_id,
+                    "window_id": w.window_id,
+                })
+        return out
+    return _run(_impl)
+
+
 def get_scrollback(session_id: str, max_lines: int = 1200) -> str:
     """Joined scrollback + screen contents for a session."""
     async def _impl(iterm2, conn):
