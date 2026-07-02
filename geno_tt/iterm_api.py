@@ -63,6 +63,20 @@ def _run(coro_fn):
     box = {}
 
     async def _main(connection):
+        # Mutations (create tab, reorder) make iTerm fire layout/focus
+        # notifications the library handles on background tasks; when we close
+        # the connection those tasks error harmlessly. Swallow that teardown
+        # noise so it doesn't spam stderr.
+        import asyncio
+
+        def _quiet(loop, ctx):
+            exc = ctx.get("exception")
+            if exc and type(exc).__name__ in (
+                    "ConnectionClosedError", "ConnectionClosedOK", "CancelledError"):
+                return
+            loop.default_exception_handler(ctx)
+
+        asyncio.get_running_loop().set_exception_handler(_quiet)
         box["value"] = await coro_fn(iterm2, connection)
 
     try:
@@ -118,6 +132,32 @@ def list_tabs() -> list[dict]:
                     "window_id": w.window_id,
                 })
         return out
+    return _run(_impl)
+
+
+def create_titled_tab(title: str, cwd: str | None = None) -> str | None:
+    """Create a tab (in the current session's window, else the first), cd to
+    cwd, and give it a sticky title. Used by `reg push` to restore registry
+    nodes that have no live tab. Non-activating."""
+    cur = current_session_id()
+
+    async def _impl(iterm2, conn):
+        app = await iterm2.async_get_app(conn)
+        target = None
+        if cur:
+            for w in app.windows:
+                for t in w.tabs:
+                    for s in t.sessions:
+                        if s.session_id == cur:
+                            target = w
+        target = target or (app.windows[0] if app.windows else None)
+        if not target:
+            return None
+        tab = await target.async_create_tab()
+        await tab.async_set_title(title)
+        if cwd:
+            await tab.sessions[0].async_send_text(f"cd {cwd}\n")
+        return tab.tab_id
     return _run(_impl)
 
 
