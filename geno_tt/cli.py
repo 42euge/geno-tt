@@ -1002,6 +1002,19 @@ def cmd_iterm(args, config):
                 n += 1
             registry.save(reg)
             print(f"pulled {n} iTerm tab(s) → {registry.PATH}")
+        elif sub == "push":
+            reg = registry.load()
+            live = {t["title"].lstrip("✳⠂⠐⠠ ").strip() for t in ia.list_tabs()}
+            n = 0
+            for path, node in sorted(reg.get("nodes", {}).items()):
+                it = node.get("iterm")
+                if not it or path in live:
+                    continue  # only restore registry nodes missing a live tab
+                ia.create_titled_tab(path, it.get("cwd") or None)
+                print(f"  restored {_BOLD}{path}{_RESET} {_DIM}(cd {it.get('cwd','~')}){_RESET}")
+                n += 1
+            print(f"restored {n} missing iTerm tab(s)" if n
+                  else f"{_DIM}all iTerm nodes already present{_RESET}")
         else:  # show — the unified cross-surface view
             reg = registry.load()
             nodes = reg.get("nodes", {})
