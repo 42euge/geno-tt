@@ -949,8 +949,35 @@ def cmd_iterm(args, config):
         sid = ia.current_session_id() if name == "sel" else ia.session_id_for_tty(name)
         if not sid:
             raise SystemExit(f"No session for '{name}'.")
-        ia.set_session_name(sid, dotname)
-        print(f"Named {name} → {dotname}  {_DIM}(holds while idle; Claude re-titles on activity){_RESET}")
+        # tab-title override: sticky, beats Claude's live re-titling
+        ia.set_tab_title(sid, dotname)
+        print(f"Named {name} → {dotname}")
+
+    elif action == "new-task":
+        if not name:
+            raise SystemExit("Usage: tt iterm new-task <name>")
+        wid = ia.new_task(name)
+        print(f"Opened task window '{name}' with an orchestrator "
+              f"({_DIM}{wid}{_RESET}).")
+        print(f"{_DIM}It will spawn dot-named tabs as needs surface: "
+              f"tt iterm tab {name}.<aspect> --claude{_RESET}")
+
+    elif action == "tab":
+        if not name:
+            raise SystemExit("Usage: tt iterm tab <name.aspect> [--claude | --cmd \"…\"]")
+        tp = argparse.ArgumentParser(prog="tt iterm tab", add_help=False)
+        tp.add_argument("--claude", action="store_true")
+        tp.add_argument("--cmd", default=None)
+        ta = tp.parse_args(rest)
+        cmd = "clauded" if ta.claude else ta.cmd
+        ia.add_tab(name, cmd)
+        print(f"Added tab '{name}'" + (f" running: {cmd}" if cmd else "") + ".")
+
+    elif action == "window":
+        if not name:
+            raise SystemExit("Usage: tt iterm window <title>")
+        ia.set_window_title(" ".join([name] + rest))
+        print(f"Window titled '{name}'.")
 
     elif action == "resume":
         rp = argparse.ArgumentParser(prog="tt iterm resume", add_help=False)
@@ -997,10 +1024,24 @@ def cmd_iterm(args, config):
                 if "." not in title:
                     continue  # only dot-notation tabs are registry nodes
                 registry.node(reg, title)["iterm"] = {
-                    "tty": t.get("tty", ""), "window_id": t.get("window_id", "")}
+                    "tty": t.get("tty", ""), "cwd": t.get("cwd", ""),
+                    "window_id": t.get("window_id", "")}
                 n += 1
             registry.save(reg)
             print(f"pulled {n} iTerm tab(s) → {registry.PATH}")
+        elif sub == "push":
+            reg = registry.load()
+            live = {t["title"].lstrip("✳⠂⠐⠠ ").strip() for t in ia.list_tabs()}
+            n = 0
+            for path, node in sorted(reg.get("nodes", {}).items()):
+                it = node.get("iterm")
+                if not it or path in live:
+                    continue  # only restore registry nodes missing a live tab
+                ia.create_titled_tab(path, it.get("cwd") or None)
+                print(f"  restored {_BOLD}{path}{_RESET} {_DIM}(cd {it.get('cwd','~')}){_RESET}")
+                n += 1
+            print(f"restored {n} missing iTerm tab(s)" if n
+                  else f"{_DIM}all iTerm nodes already present{_RESET}")
         else:  # show — the unified cross-surface view
             reg = registry.load()
             nodes = reg.get("nodes", {})
@@ -1014,9 +1055,29 @@ def cmd_iterm(args, config):
                     surf.append(f"chrome:{len(node['chrome'].get('urls', []))}t/{node['chrome'].get('color','')}")
                 print(f"  {_BOLD}{path}{_RESET}  {_DIM}[{' · '.join(surf) or 'no surfaces'}]{_RESET}")
 
+    elif action == "focus":
+        if not name:
+            raise SystemExit("Usage: tt iterm focus <node>   (object-notation path)")
+        # iTerm side: activate the tab whose title matches the node
+        hit = [t for t in ia.list_tabs()
+               if t["title"].lstrip("✳⠂⠐⠠ ").strip() == name]
+        if hit:
+            ia.activate(hit[0]["session_id"])
+            print(f"focused iTerm tab {_BOLD}{name}{_RESET}")
+        else:
+            print(f"{_DIM}no iTerm tab titled '{name}'{_RESET}")
+        # cross-surface: raise the Chrome group for this node via geno-surf, if present
+        import shutil, subprocess
+        if shutil.which("surf"):
+            r = subprocess.run(["surf", "focus", name], capture_output=True, text=True)
+            out = (r.stdout or r.stderr).strip().splitlines()
+            if out:
+                print(f"  {_DIM}surf: {out[-1]}{_RESET}")
+
     else:
         raise SystemExit(
-            f"Unknown iterm action '{action}'. Use ls|group|sort|name|reg|resume|fork.")
+            f"Unknown iterm action '{action}'. "
+            "Use ls|group|sort|name|window|reg|focus|new-task|tab|resume|fork.")
 
 
 def _win_of_current(sessions: list[dict]) -> str | None:
@@ -1867,8 +1928,10 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
         print("                       Whole-workspace worktrees; -w + -H to drive a remote host")
         print("  tt wt fanout <N> <prompt…>   N worktrees, an agent in each")
-        print("  tt iterm ls|group|sort|name|resume|fork")
+        print("  tt iterm ls|group|sort|name|window|resume|fork")
         print("                       Orchestrate iTerm2 windows/tabs (Python API)")
+        print("  tt iterm new-task <name>     New window + Claude orchestrator for a task")
+        print("  tt iterm tab <name.aspect> [--claude]   Add a dot-named tab (orchestrator fan-out)")
         print("  tt report [--all-hosts]      Cross-host inventory tree")
         print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
         print("                       Clone every <prefix>* repo under a GitHub owner into a workspace")

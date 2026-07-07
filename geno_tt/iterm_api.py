@@ -12,9 +12,21 @@ so windows/tabs are read and rearranged without stealing focus.
 """
 
 import os
+import shlex
 import subprocess
 
 APP_NAME = "geno-tt"
+
+# Seed brief handed to a new task's orchestrator Claude. It grows the window
+# with one dot-named tab per concern as needs surface in conversation.
+ORCHESTRATOR_SEED = (
+    "You are the orchestrator for the task '{name}' (no Jira yet). This window "
+    "is the task's home. Talk through the work with me; as concrete sub-tasks "
+    "surface, spawn ONE tab per concern using dot-notation, e.g.:  "
+    "tt iterm tab {name}.<aspect> --claude  (one concern per tab, "
+    "'{name}.<area>.<aspect>' as it deepens). Keep tabs focused and named. "
+    "Start by asking me what '{name}' is and what the first concern is."
+)
 _SETUP_HINT = (
     "tt iterm needs the iTerm2 Python API.\n"
     "  1. Install the package:  pipx inject geno-tt iterm2\n"
@@ -63,6 +75,20 @@ def _run(coro_fn):
     box = {}
 
     async def _main(connection):
+        # Mutations (create tab, reorder) make iTerm fire layout/focus
+        # notifications the library handles on background tasks; when we close
+        # the connection those tasks error harmlessly. Swallow that teardown
+        # noise so it doesn't spam stderr.
+        import asyncio
+
+        def _quiet(loop, ctx):
+            exc = ctx.get("exception")
+            if exc and type(exc).__name__ in (
+                    "ConnectionClosedError", "ConnectionClosedOK", "CancelledError"):
+                return
+            loop.default_exception_handler(ctx)
+
+        asyncio.get_running_loop().set_exception_handler(_quiet)
         box["value"] = await coro_fn(iterm2, connection)
 
     try:
@@ -113,11 +139,51 @@ def list_tabs() -> list[dict]:
                 out.append({
                     "title": (await t.async_get_variable("title")) or "",
                     "tty": (await s0.async_get_variable("tty")) or "",
+                    "cwd": (await s0.async_get_variable("path")) or "",
                     "session_id": s0.session_id,
                     "window_id": w.window_id,
                 })
         return out
     return _run(_impl)
+
+
+def create_titled_tab(title: str, cwd: str | None = None) -> str | None:
+    """Create a tab (in the current session's window, else the first), cd to
+    cwd, and give it a sticky title. Used by `reg push` to restore registry
+    nodes that have no live tab. Non-activating."""
+    cur = current_session_id()
+
+    async def _impl(iterm2, conn):
+        app = await iterm2.async_get_app(conn)
+        target = None
+        if cur:
+            for w in app.windows:
+                for t in w.tabs:
+                    for s in t.sessions:
+                        if s.session_id == cur:
+                            target = w
+        target = target or (app.windows[0] if app.windows else None)
+        if not target:
+            return None
+        tab = await target.async_create_tab()
+        await tab.async_set_title(title)
+        if cwd:
+            await tab.sessions[0].async_send_text(f"cd {cwd}\n")
+        return tab.tab_id
+    return _run(_impl)
+
+
+def activate(session_id: str) -> bool:
+    """Bring a session's tab to the front (explicit focus — the one place we DO
+    activate). Selects the tab and orders its window front."""
+    async def _impl(iterm2, conn):
+        app = await iterm2.async_get_app(conn)
+        s = app.get_session_by_id(session_id)
+        if not s:
+            return False
+        await s.async_activate(select_tab=True, order_window_front=True)
+        return True
+    return bool(_run(_impl))
 
 
 def get_scrollback(session_id: str, max_lines: int = 1200) -> str:
@@ -244,6 +310,83 @@ def split_and_resume(session_id: str, uuid: str, vertical: bool = True,
             await new.async_set_name(name)
         await new.async_send_text(cmd)
         return new.session_id
+    return _run(_impl)
+
+
+async def _find_tab_of(app, session_id):
+    for w in app.windows:
+        for t in w.tabs:
+            for s in t.sessions:
+                if s.session_id == session_id:
+                    return w, t
+    return None, None
+
+
+def set_tab_title(session_id: str, title: str) -> bool:
+    """Set the *tab* title for the tab containing a session (sticky — overrides
+    both manual titles and Claude's live re-titling, unlike async_set_name)."""
+    async def _impl(iterm2, conn):
+        app = await iterm2.async_get_app(conn)
+        _, t = await _find_tab_of(app, session_id)
+        if t:
+            await t.async_set_title(title)
+            return True
+        return False
+    return bool(_run(_impl))
+
+
+def set_window_title(title: str, session_id: str | None = None) -> None:
+    """Name the window (defaults to the window holding the current session)."""
+    sid = session_id or current_session_id()
+    async def _impl(iterm2, conn):
+        app = await iterm2.async_get_app(conn)
+        w = None
+        if sid:
+            w, _ = await _find_tab_of(app, sid)
+        w = w or (app.windows[0] if app.windows else None)
+        if w:
+            await w.async_set_title(title)
+    _run(_impl)
+
+
+def new_task(name: str, seed: str | None = None) -> str | None:
+    """Open a NEW window titled `name` running a Claude orchestrator for the task.
+
+    The orchestrator is seeded to grow the window with dot-named tabs per concern.
+    """
+    brief = (seed or ORCHESTRATOR_SEED).format(name=name)
+    launch = "clauded " + shlex.quote(brief)
+
+    async def _impl(iterm2, conn):
+        win = await iterm2.Window.async_create(conn)
+        if not win:
+            return None
+        await win.async_set_title(name)
+        tab = win.tabs[0]
+        await tab.async_set_title(f"{name}.orchestrator")
+        await tab.sessions[0].async_send_text(launch + "\n")
+        return win.window_id
+    return _run(_impl)
+
+
+def add_tab(title: str, cmd: str | None = None) -> str | None:
+    """Add a sticky-titled tab to the current window (the orchestrator's fan-out
+    primitive). Optionally run `cmd` in it. Falls back to the first window."""
+    cur = current_session_id()
+
+    async def _impl(iterm2, conn):
+        app = await iterm2.async_get_app(conn)
+        w = None
+        if cur:
+            w, _ = await _find_tab_of(app, cur)
+        w = w or (app.windows[0] if app.windows else None)
+        if not w:
+            return None
+        tab = await w.async_create_tab()
+        await tab.async_set_title(title)
+        if cmd:
+            await tab.sessions[0].async_send_text(cmd + "\n")
+        return tab.tab_id
     return _run(_impl)
 
 
