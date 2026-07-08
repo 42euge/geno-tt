@@ -1864,9 +1864,11 @@ def cmd_spawn(args, config):
     print(f"  attach: tt {session}")
 
 
-SUBCOMMANDS = {"ls", "kill", "new", "new-project", "wt", "iterm", "code", "repos", "inv", "report",
-               "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
-               "default", "add-host", "profile", "theme"}
+SUBCOMMANDS = {"ls", "kill", "new", "new-project", "wt", "iterm", "tmux", "code", "repos", "inv",
+               "report", "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
+               "default", "add-host", "profile", "theme",
+               # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task' work directly
+               "focus", "fork", "tab", "new-task"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1925,64 +1927,99 @@ def main(argv: list[str] | None = None) -> int:
     cmd = argv[0]
 
     if cmd in ("-h", "--help"):
-        print("tt - Remote tmux session manager\n")
-        print("Options:")
-        print("  -H, --host <alias>   Target a specific host (default: from config)")
-        print("  -t, --tab            Open session in a new iTerm2 tab")
-        print("  --cc                 Use tmux control mode (native iTerm2 tabs)")
-        print("  --no-cc              Force regular tmux mode\n")
-        print("Usage:")
-        print("  tt                   Open TUI (or attach if inside a session folder)")
-        print("  tt ls [--all]        List sessions (--all for all hosts)")
-        print("  tt <target> [sub]    Attach to session by ID, folder, or alpha ID")
-        print("  tt new <target>      Create new session (folder name, repo index, or path)")
-        print("  tt code <target>    Open VS Code on remote folder (repo index, name, or path)")
-        print("  tt kill <target>     Kill session(s) by ID or folder")
-        print("  tt clean [target]    Kill duplicate sessions per folder")
-        print("  tt recover           Show local session dirs and reattach to live sessions")
-        print("  tt repos [--all]     List repos on default host (--all for all hosts)")
+        print("tt — terminal + workspace orchestration\n")
+        print("iTerm (local):")
+        print("  tt ls                List iTerm2 tabs (dot-notation managed tabs)")
+        print("  tt focus <node>      Raise the tab matching a dot-notation node")
+        print("  tt fork [--node N] [--new]  Split a pane + open Claude in the new half")
+        print("  tt new-task <name>   New iTerm2 window + Claude orchestrator")
+        print("  tt tab <name> [--claude]    Add a dot-named tab (fan-out)")
+        print("  tt iterm ls|group|sort|name|window|resume|reg|focus|fork|new-task|tab")
+        print("                       Full iTerm2 namespace (Python API)")
+        print("")
+        print("tmux (remote):")
+        print("  tt tmux ls [--all]   List remote tmux sessions")
+        print("  tt tmux <target>     Attach to session by ID, folder, or alpha ID")
+        print("  tt tmux kill <t>     Kill session(s)")
+        print("  tt tmux clean        Kill duplicate sessions per folder")
+        print("  tt tmux recover      Reattach to live sessions")
+        print("  tt tmux tui [s]      Interactive TUI session manager")
+        print("  tt tmux spawn <ws> [--agents N] [--shells M]")
+        print("  tt <target> [sub]    (shorthand attach — still works)")
+        print("")
+        print("workspace:")
         print("  tt inv [-t TRACK] [-d DOMAIN] [--expand]")
-        print("                       Inventory: track/domain/workspace.born [N repos · M wt]")
         print("  tt new-project <track>.<domain>.<workspace>")
-        print("                       Scaffold ~/code/<track>/<domain>/<workspace>.<quarter>/")
         print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
-        print("                       Whole-workspace worktrees; -w + -H to drive a remote host")
-        print("  tt wt fanout <N> <prompt…>   N worktrees, an agent in each")
-        print("  tt iterm ls|group|sort|name|window|resume|fork")
-        print("                       Orchestrate iTerm2 windows/tabs (Python API)")
-        print("  tt iterm new-task <name>     New window + Claude orchestrator for a task")
-        print("  tt iterm tab <name.aspect> [--claude]   Add a dot-named tab (orchestrator fan-out)")
-        print("  tt report [--all-hosts]      Cross-host inventory tree")
+        print("  tt wt fanout <N> <prompt…>")
+        print("  tt repos [--all]")
+        print("  tt report [--all-hosts]")
         print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
-        print("                       Clone every <prefix>* repo under a GitHub owner into a workspace")
-        print("  tt mirror <workspace> <host> Replicate a workspace's repos onto another host")
-        print("  tt spawn <workspace> [--agents N] [--shells M]")
-        print("                       Multi-pane tmux session in a workspace")
-        print("  tt tui [refresh_s]   Interactive TUI session manager")
-        print("  tt hosts             List configured hosts")
-        print("  tt add-host <alias> <hostname> [-u USER] [--default] [--no-ssh]")
-        print("                       Add host, copy SSH key (one password prompt)")
-        print("  tt default [alias]   Show or set the default host")
-        print("  tt profile           Show iTerm2 profile summary")
-        print("  tt profile export    Save current iTerm2 profile to ~/.geno/tt/")
-        print("  tt profile apply     Apply saved profile to iTerm2 (new machine setup)")
-        print("  tt theme             List available color themes")
-        print("  tt theme create <n>  Capture current appearance as a named theme")
-        print("  tt theme apply <n>   Switch to a theme (instant)")
-        print("  tt theme show <n>    Show theme details")
-        print("  tt theme delete <n>  Delete a saved theme")
+        print("  tt mirror <workspace> <host>")
+        print("")
+        print("hosts / appearance:")
+        print("  tt hosts  tt add-host  tt default  tt profile  tt theme")
+        print("")
+        print("Options: -H/--host <alias>  -t/--tab  --cc  --no-cc")
         return
 
     if cmd == "ls":
-        # tt ls [host_alias] [--host HOSTNAME] [--all]
-        parser = argparse.ArgumentParser(prog="tt ls")
-        parser.add_argument("host_alias", nargs="?")
-        parser.add_argument("--host")
-        parser.add_argument("--all", action="store_true")
-        args = parser.parse_args(argv[1:])
-        # Auto-filter when inside a session folder
-        args.folder_filter = session_ctx
-        cmd_ls(args, config)
+        # tt ls — show iTerm tabs (local) by default; tt tmux ls for remote sessions
+        iargs = argparse.Namespace(action="ls", name=None, rest=argv[1:])
+        cmd_iterm(iargs, config)
+
+    elif cmd == "tmux":
+        # tt tmux [sub] — explicit remote tmux namespace; routes to old tt ls/attach/kill/etc.
+        sub = argv[1] if len(argv) > 1 else "ls"
+        if sub == "ls":
+            parser = argparse.ArgumentParser(prog="tt tmux ls")
+            parser.add_argument("host_alias", nargs="?")
+            parser.add_argument("--host")
+            parser.add_argument("--all", action="store_true")
+            args = parser.parse_args(argv[2:])
+            args.folder_filter = session_ctx
+            cmd_ls(args, config)
+        elif sub in ("kill",):
+            if len(argv) < 3:
+                raise SystemExit("Usage: tt tmux kill <id|folder>")
+            cmd_kill(argparse.Namespace(target=argv[2]), config)
+        elif sub in ("clean",):
+            cmd_clean(argparse.Namespace(target=argv[2] if len(argv) > 2 else None), config)
+        elif sub in ("recover",):
+            cmd_recover(argparse.Namespace(), config)
+        elif sub in ("tui",):
+            refresh = int(argv[2]) if len(argv) > 2 else 5
+            cmd_tui(argparse.Namespace(refresh_s=refresh), config)
+        elif sub in ("spawn",):
+            sp = argparse.ArgumentParser(prog="tt tmux spawn", add_help=False)
+            sp.add_argument("workspace_pos", nargs="?", default=None)
+            sp.add_argument("--agents", type=int, default=1)
+            sp.add_argument("--shells", type=int, default=1)
+            cmd_spawn(sp.parse_args(argv[2:]), config)
+        else:
+            # bare 'tt tmux <target>' — attach
+            cmd_attach(argparse.Namespace(target=sub, sub=argv[2] if len(argv) > 2 else None,
+                                          host=None, tab=False, cc=None), config)
+
+    elif cmd == "focus":
+        iargs = argparse.Namespace(action="focus", name=argv[1] if len(argv) > 1 else None,
+                                   rest=argv[2:])
+        cmd_iterm(iargs, config)
+
+    elif cmd == "fork":
+        iargs = argparse.Namespace(action="fork", name=argv[1] if len(argv) > 1 else None,
+                                   rest=argv[1:])
+        cmd_iterm(iargs, config)
+
+    elif cmd == "new-task":
+        iargs = argparse.Namespace(action="new-task", name=argv[1] if len(argv) > 1 else None,
+                                   rest=argv[2:])
+        cmd_iterm(iargs, config)
+
+    elif cmd == "tab":
+        iargs = argparse.Namespace(action="tab", name=argv[1] if len(argv) > 1 else None,
+                                   rest=argv[2:])
+        cmd_iterm(iargs, config)
 
     elif cmd == "repos":
         rp = argparse.ArgumentParser(prog="tt repos", add_help=False)
