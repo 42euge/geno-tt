@@ -313,6 +313,34 @@ def split_and_resume(session_id: str, uuid: str, vertical: bool = True,
     return _run(_impl)
 
 
+def session_id_for_node(path: str) -> str | None:
+    """Resolve a dot-notation registry node to its live tab's session id."""
+    for t in list_tabs():
+        title = (t.get("title") or "").lstrip("✳⠂⠐⠠ ").strip()
+        if title == path:
+            return t["session_id"]
+    return None
+
+
+def split_and_new(session_id: str, cwd: str | None = None, vertical: bool = True,
+                  name: str | None = None) -> str | None:
+    """Split a session's pane and start a BRAND-NEW Claude session in it — the
+    fork diverges from here; it never resumes the parent pane's own transcript."""
+    cmd = (f"cd {shlex.quote(cwd)} && clauded" if cwd else "clauded") + "\n"
+
+    async def _impl(iterm2, conn):
+        app = await iterm2.async_get_app(conn)
+        s = app.get_session_by_id(session_id)
+        if not s:
+            return None
+        new = await s.async_split_pane(vertical=vertical)
+        if name:
+            await new.async_set_name(name)
+        await new.async_send_text(cmd)
+        return new.session_id
+    return _run(_impl)
+
+
 async def _find_tab_of(app, session_id):
     for w in app.windows:
         for t in w.tabs:
