@@ -7,7 +7,7 @@ description: >-
 allowed-tools: "Bash(tt *) Bash(python3 -m geno_tt *)"
 metadata:
   author: 42euge
-  version: "0.6.0"
+  version: "0.7.0"
 ---
 
 # geno-tt — terminal/session + workspace manager
