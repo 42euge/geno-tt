@@ -1006,12 +1006,32 @@ def cmd_iterm(args, config):
             print(f"Resumed {len(plan)} session(s).")
 
     elif action == "fork":
-        uuid = name or ia.current_session_id()
-        cur = ia.current_session_id()
-        if not cur:
-            raise SystemExit("Not inside an iTerm2 session (no $ITERM_SESSION_ID).")
-        new = ia.split_and_resume(cur, uuid, vertical=True, name="fork")
-        print(f"Forked side pane {new} resuming {uuid[:8]}." if new else "Split failed.")
+        fp = argparse.ArgumentParser(prog="tt iterm fork", add_help=False)
+        fp.add_argument("--node", default=None,
+                        help="fork the tab for this registry node instead of the current pane")
+        fp.add_argument("--new", action="store_true",
+                        help="start a brand-new Claude session instead of resuming")
+        fa = fp.parse_args(rest)
+
+        if fa.node:
+            target = ia.session_id_for_node(fa.node)
+            if not target:
+                raise SystemExit(f"No live iTerm tab for node '{fa.node}'.")
+        else:
+            target = ia.current_session_id()
+            if not target:
+                raise SystemExit("Not inside an iTerm2 session (no $ITERM_SESSION_ID). "
+                                  "Pass --node <path> to fork a specific tab.")
+
+        if fa.new:
+            new = ia.split_and_new(target, name="fork")
+            print(f"Forked side pane {new} with a new Claude session." if new else "Split failed.")
+        else:
+            uuid = name or ia.current_session_id()
+            if not uuid:
+                raise SystemExit("Usage: tt iterm fork <uuid> | fork --node <path> [--new]")
+            new = ia.split_and_resume(target, uuid, vertical=True, name="fork")
+            print(f"Forked side pane {new} resuming {uuid[:8]}." if new else "Split failed.")
 
     elif action == "reg":
         from . import registry
