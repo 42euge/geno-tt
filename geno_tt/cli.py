@@ -1024,23 +1024,45 @@ def cmd_iterm(args, config):
 
     elif action == "new-task":
         if not name:
-            raise SystemExit("Usage: tt iterm new-task <name>")
-        wid = ia.new_task(name)
-        print(f"Opened task window '{name}' with an orchestrator "
-              f"({_DIM}{wid}{_RESET}).")
-        print(f"{_DIM}It will spawn dot-named tabs as needs surface: "
-              f"tt iterm tab {name}.<aspect> --claude{_RESET}")
+            raise SystemExit("Usage: tt iterm new-task <name> [--cwd <dir>] [--here]")
+        ntp = argparse.ArgumentParser(prog="tt iterm new-task", add_help=False)
+        ntp.add_argument("--cwd", default=None, help="working directory for the orchestrator")
+        ntp.add_argument("--here", action="store_true",
+                         help="add orchestrator as a tab in the current window, not a new one")
+        nta = ntp.parse_args(rest)
+        if nta.here:
+            # Add to current window instead of opening a new one
+            brief = ia.ORCHESTRATOR_SEED.format(name=name)
+            cd_prefix = f"cd {ia.shlex.quote(nta.cwd)} && " if nta.cwd else ""
+            cmd = cd_prefix + "clauded " + ia.shlex.quote(brief)
+            tab_id = ia.add_tab(f"{name}.orchestrator", cmd)
+            print(f"Added orchestrator tab '{name}.orchestrator' to current window"
+                  + (f" (cd {nta.cwd})" if nta.cwd else "") + ".")
+        else:
+            wid = ia.new_task(name, cwd=nta.cwd)
+            print(f"Opened task window '{name}' with an orchestrator "
+                  f"({_DIM}{wid}{_RESET})"
+                  + (f" in {nta.cwd}" if nta.cwd else "") + ".")
+        print(f"{_DIM}Fan-out: tt iterm tab {name}.<aspect> --claude{_RESET}")
 
     elif action == "tab":
         if not name:
-            raise SystemExit("Usage: tt iterm tab <name.aspect> [--claude | --cmd \"…\"]")
+            raise SystemExit("Usage: tt iterm tab <name.aspect> [--claude | --cmd \"…\"] [--cwd <dir>]")
         tp = argparse.ArgumentParser(prog="tt iterm tab", add_help=False)
         tp.add_argument("--claude", action="store_true")
         tp.add_argument("--cmd", default=None)
+        tp.add_argument("--cwd", default=None, help="cd to this dir before running the command")
         ta = tp.parse_args(rest)
-        cmd = "clauded" if ta.claude else ta.cmd
+        base_cmd = "clauded" if ta.claude else ta.cmd
+        if ta.cwd and base_cmd:
+            cmd = f"cd {ia.shlex.quote(ta.cwd)} && {base_cmd}"
+        elif ta.cwd:
+            cmd = f"cd {ia.shlex.quote(ta.cwd)}"
+        else:
+            cmd = base_cmd
         ia.add_tab(name, cmd)
-        print(f"Added tab '{name}'" + (f" running: {cmd}" if cmd else "") + ".")
+        print(f"Added tab '{name}'" + (f" (cd {ta.cwd})" if ta.cwd else "")
+              + (f" running: {base_cmd}" if base_cmd else "") + ".")
 
     elif action == "window":
         if not name:
