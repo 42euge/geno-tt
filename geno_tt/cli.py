@@ -900,23 +900,33 @@ def cmd_iterm(args, config):
     from . import iterm_api as ia  # lazy: orchestration needs the optional extra
 
     if action == "ls":
+        _YELLOW = _COLOR_CODES["yellow"]
         tabs = ia.list_tabs()
         cur_win = None
+        unnamed_count = 0
         for t in tabs:
             if t["window_id"] != cur_win:
                 cur_win = t["window_id"]
                 print(f"{_BOLD}window {t['win_index'] + 1}{_RESET} {_DIM}({cur_win}){_RESET}")
-            title = t["title"].lstrip("✳⠂⠐⠠ ").strip() or t["title"] or "?"
+            raw = t["title"].lstrip("✳⠂⠐⠠ ").strip()
+            managed = "." in raw
+            title = raw or "?"
             job = t["job"] or "-"
             pane_count = len(t.get("panes", []))
             pane_tag = f" {_DIM}[{pane_count} panes]{_RESET}" if pane_count > 1 else ""
-            print(f"  {_BOLD}{title:<34}{_RESET}{pane_tag}")
+            if managed:
+                print(f"  {_BOLD}{title:<34}{_RESET}{pane_tag}")
+            else:
+                unnamed_count += 1
+                print(f"  {_YELLOW}⚠ {title:<33}{_RESET}{_DIM} (unnamed){_RESET}{pane_tag}")
             if pane_count > 1:
                 for p in t["panes"]:
                     pjob = p["job"] or "-"
                     print(f"    {_DIM}├ {p['tty']:<12} {pjob:<12} {p['cwd']}{_RESET}")
             else:
                 print(f"  {_DIM}  {t['tty']:<12} {job:<12} {t['cwd']}{_RESET}")
+        if unnamed_count:
+            print(f"\n{_YELLOW}{unnamed_count} unnamed tab(s) — run: tt name{_RESET}")
 
     elif action == "group":
         dry = "--dry-run" in rest
@@ -951,15 +961,42 @@ def cmd_iterm(args, config):
               + (f", pinned '{sa.pin}'." if sa.pin else "."))
 
     elif action == "name":
-        if not name or not rest:
-            raise SystemExit("Usage: tt iterm name <tty|sel> <dotname>")
-        dotname = rest[0]
-        sid = ia.current_session_id() if name == "sel" else ia.session_id_for_tty(name)
-        if not sid:
-            raise SystemExit(f"No session for '{name}'.")
-        # tab-title override: sticky, beats Claude's live re-titling
-        ia.set_tab_title(sid, dotname)
-        print(f"Named {name} → {dotname}")
+        interactive = "--interactive" in rest or "-i" in rest
+        if interactive or (not name and not rest):
+            # Walk unnamed tabs one by one
+            tabs = ia.list_tabs()
+            unnamed = [t for t in tabs
+                       if "." not in t["title"].lstrip("✳⠂⠐⠠ ").strip()]
+            if not unnamed:
+                print(f"{_COLOR_CODES['green']}All tabs are named.{_RESET}")
+            else:
+                print(f"{len(unnamed)} unnamed tab(s). Enter a dot-notation name or press Enter to skip.\n")
+                named = 0
+                for t in unnamed:
+                    raw = t["title"] or "?"
+                    print(f"  tab: {_DIM}{raw}{_RESET}  {_DIM}({t['tty']} · {t['job'] or '-'} · {t['cwd']}){_RESET}")
+                    try:
+                        dotname = input("  name (or Enter to skip): ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        print("\naborted.")
+                        break
+                    if dotname:
+                        ia.set_tab_title(t["session_id"], dotname)
+                        print(f"  {_COLOR_CODES['green']}✓ named → {dotname}{_RESET}\n")
+                        named += 1
+                    else:
+                        print(f"  {_DIM}skipped{_RESET}\n")
+                print(f"Named {named}/{len(unnamed)} tab(s).")
+        else:
+            if not name or not rest:
+                raise SystemExit("Usage: tt iterm name <tty|sel> <dotname>  |  tt iterm name -i")
+            dotname = rest[0]
+            sid = ia.current_session_id() if name == "sel" else ia.session_id_for_tty(name)
+            if not sid:
+                raise SystemExit(f"No session for '{name}'.")
+            # tab-title override: sticky, beats Claude's live re-titling
+            ia.set_tab_title(sid, dotname)
+            print(f"Named {name} → {dotname}")
 
     elif action == "new-task":
         if not name:
@@ -1875,8 +1912,8 @@ def cmd_spawn(args, config):
 SUBCOMMANDS = {"ls", "kill", "new", "new-project", "wt", "iterm", "tmux", "code", "repos", "inv",
                "report", "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
                "default", "add-host", "profile", "theme",
-               # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task' work directly
-               "focus", "fork", "tab", "new-task"}
+               # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task/name' work directly
+               "focus", "fork", "tab", "new-task", "name"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2026,6 +2063,12 @@ def main(argv: list[str] | None = None) -> int:
 
     elif cmd == "tab":
         iargs = argparse.Namespace(action="tab", name=argv[1] if len(argv) > 1 else None,
+                                   rest=argv[2:])
+        cmd_iterm(iargs, config)
+
+    elif cmd == "name":
+        # tt name [-i] [tty|sel] [dotname]  — shortcut for tt iterm name
+        iargs = argparse.Namespace(action="name", name=argv[1] if len(argv) > 1 else None,
                                    rest=argv[2:])
         cmd_iterm(iargs, config)
 
