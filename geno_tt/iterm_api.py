@@ -128,20 +128,31 @@ def list_sessions() -> list[dict]:
 
 
 def list_tabs() -> list[dict]:
-    """One entry per tab: its (sticky) title + a representative tty/session/window.
-    The tab title carries the dot-notation object path used by the registry."""
+    """One entry per tab: sticky title, pane count, jobs, tty/cwd of the first pane."""
     async def _impl(iterm2, conn):
         app = await iterm2.async_get_app(conn)
         out = []
-        for w in app.windows:
+        for wi, w in enumerate(app.windows):
             for t in w.tabs:
                 s0 = t.sessions[0]
+                panes = []
+                for s in t.sessions:
+                    panes.append({
+                        "tty": (await s.async_get_variable("tty")) or "",
+                        "job": (await s.async_get_variable("jobName")) or "",
+                        "name": (await s.async_get_variable("name")) or "",
+                        "cwd": (await s.async_get_variable("path")) or "",
+                        "session_id": s.session_id,
+                    })
                 out.append({
                     "title": (await t.async_get_variable("title")) or "",
                     "tty": (await s0.async_get_variable("tty")) or "",
                     "cwd": (await s0.async_get_variable("path")) or "",
+                    "job": (await s0.async_get_variable("jobName")) or "",
                     "session_id": s0.session_id,
                     "window_id": w.window_id,
+                    "win_index": wi,
+                    "panes": panes,
                 })
         return out
     return _run(_impl)
