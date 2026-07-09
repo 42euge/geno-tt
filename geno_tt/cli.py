@@ -900,15 +900,23 @@ def cmd_iterm(args, config):
     from . import iterm_api as ia  # lazy: orchestration needs the optional extra
 
     if action == "ls":
-        sessions = ia.list_sessions()
+        tabs = ia.list_tabs()
         cur_win = None
-        for s in sessions:
-            if s["window_id"] != cur_win:
-                cur_win = s["window_id"]
-                print(f"{_BOLD}window {s['win_index'] + 1}{_RESET} {_DIM}({cur_win}){_RESET}")
-            nm = s["name"] or "?"
-            job = s["job"] or "-"
-            print(f"  {nm:<34} {_DIM}{s['tty']:<12} {job:<12} {s['cwd']}{_RESET}")
+        for t in tabs:
+            if t["window_id"] != cur_win:
+                cur_win = t["window_id"]
+                print(f"{_BOLD}window {t['win_index'] + 1}{_RESET} {_DIM}({cur_win}){_RESET}")
+            title = t["title"].lstrip("✳⠂⠐⠠ ").strip() or t["title"] or "?"
+            job = t["job"] or "-"
+            pane_count = len(t.get("panes", []))
+            pane_tag = f" {_DIM}[{pane_count} panes]{_RESET}" if pane_count > 1 else ""
+            print(f"  {_BOLD}{title:<34}{_RESET}{pane_tag}")
+            if pane_count > 1:
+                for p in t["panes"]:
+                    pjob = p["job"] or "-"
+                    print(f"    {_DIM}├ {p['tty']:<12} {pjob:<12} {p['cwd']}{_RESET}")
+            else:
+                print(f"  {_DIM}  {t['tty']:<12} {job:<12} {t['cwd']}{_RESET}")
 
     elif action == "group":
         dry = "--dry-run" in rest
