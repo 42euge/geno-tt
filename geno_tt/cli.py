@@ -972,14 +972,38 @@ def cmd_iterm(args, config):
             else:
                 print(f"{len(unnamed)} unnamed tab(s). Enter a dot-notation name or press Enter to skip.\n")
                 named = 0
+                import shutil, subprocess as _sp
+                _have_llm = bool(shutil.which("geno-tools"))
                 for t in unnamed:
                     raw = t["title"] or "?"
                     print(f"  tab: {_DIM}{raw}{_RESET}  {_DIM}({t['tty']} · {t['job'] or '-'} · {t['cwd']}){_RESET}")
+                    suggestion = ""
+                    if _have_llm:
+                        try:
+                            r = _sp.run(
+                                ["geno-tools", "llm", "suggest",
+                                 "--cwd", t["cwd"] or "",
+                                 "--job", t["job"] or "",
+                                 "--title", raw],
+                                capture_output=True, text=True, timeout=15,
+                            )
+                            suggestion = r.stdout.strip()
+                        except Exception:
+                            pass
+                    if suggestion:
+                        prompt = f"  name [{_COLOR_CODES['green']}suggested: {suggestion}{_RESET}] (Enter to accept, type to override, - to skip): "
+                    else:
+                        prompt = "  name (or Enter to skip): "
                     try:
-                        dotname = input("  name (or Enter to skip): ").strip()
+                        dotname = input(prompt).strip()
                     except (EOFError, KeyboardInterrupt):
                         print("\naborted.")
                         break
+                    if dotname == "-":
+                        print(f"  {_DIM}skipped{_RESET}\n")
+                        continue
+                    if not dotname and suggestion:
+                        dotname = suggestion
                     if dotname:
                         ia.set_tab_title(t["session_id"], dotname)
                         print(f"  {_COLOR_CODES['green']}✓ named → {dotname}{_RESET}\n")
