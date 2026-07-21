@@ -47,3 +47,12 @@ if [[ -f "${tt_shell_src}" ]]; then
     fi
   done
 fi
+
+# 3. Keep the workspace-scheme docs current in the global CLAUDE.md.
+#    Idempotently (re)writes a marker-delimited "Workspaces" section so every
+#    agent session knows the code-org scheme and that geno-ws is deprecated.
+#    Fully owned by this hook; user notes outside the markers are preserved.
+inject_py="${plugin_root}/geno_tt/scripts/inject_claude_md.py"
+if [[ -f "${inject_py}" ]] && command -v python3 >/dev/null 2>&1; then
+  python3 "${inject_py}" "${HOME}/.claude/CLAUDE.md" >>"${log_file}" 2>&1 || true
+fi
