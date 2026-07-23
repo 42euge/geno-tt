@@ -15,6 +15,53 @@ def load_config() -> dict:
         return tomllib.load(f)
 
 
+# --- Workspace tracks -------------------------------------------------------
+# A track is the first path segment of the scheme:
+#   ~/code/<track>/<domain>/<workspace>.<born>/<repo>
+# Tracks are object-notation entries: a name plus its display colors. The
+# builtin set below can be extended or overridden from config.toml, e.g.:
+#
+#   [[tracks]]
+#   name = "main"
+#   ansi = "green"                 # key into the base ANSI palette
+#   hex = { bar = "#14281a", fg = "#a0e0b0" }   # optional; TUI/overlay accent
+#
+# Any config track with a new name is appended; a config track reusing a
+# builtin name overrides that builtin's colors. Order = builtins first, then
+# new config tracks in file order (drives display ordering).
+DEFAULT_TRACKS = [
+    {"name": "main",    "ansi": "green",  "hex": {"bar": "#14281a", "fg": "#a0e0b0"}},
+    {"name": "crit",    "ansi": "red",    "hex": {"bar": "#2e1414", "fg": "#e0a0a0"}},
+    {"name": "explore", "ansi": "blue",   "hex": {"bar": "#14202e", "fg": "#a0c0e0"}},
+    {"name": "chore",   "ansi": "yellow", "hex": {"bar": "#222214", "fg": "#d0d080"}},
+    {"name": "side",    "ansi": "purp",   "hex": {"bar": "#141428", "fg": "#a0a0e0"}},
+]
+
+
+def load_tracks(config: dict | None = None) -> list[dict]:
+    """Return the ordered list of track objects (builtins merged with config).
+
+    Each entry: {"name": str, "ansi": str, "hex": {"bar": str, "fg": str}}.
+    Config `[[tracks]]` entries override a builtin of the same name (merged
+    field-wise) or append as new tracks in file order.
+    """
+    if config is None:
+        config = load_config()
+    merged: dict[str, dict] = {t["name"]: dict(t) for t in DEFAULT_TRACKS}
+    order: list[str] = [t["name"] for t in DEFAULT_TRACKS]
+    for entry in config.get("tracks", []) or []:
+        name = entry.get("name")
+        if not name:
+            continue
+        if name in merged:
+            merged[name] = {**merged[name], **{k: v for k, v in entry.items() if k != "name"}, "name": name}
+        else:
+            merged[name] = {"name": name, "ansi": entry.get("ansi", "indigo"),
+                            "hex": entry.get("hex", {"bar": "#14141e", "fg": "#a0a0c0"})}
+            order.append(name)
+    return [merged[n] for n in order]
+
+
 def set_default_host(alias: str):
     """Update default_host in the config file."""
     if not CONFIG_PATH.exists():

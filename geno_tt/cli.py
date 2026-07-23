@@ -8,7 +8,7 @@ import sys
 
 from pathlib import Path
 
-from .config import load_config, resolve_host, SESSIONS_DIR
+from .config import load_config, resolve_host, SESSIONS_DIR, load_tracks
 from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_repos, list_worktrees, add_worktree, remove_worktree, discover_owner_repos, clone_repos, workspace_repo_remotes, spawn_layout, LOCAL_HOSTNAME
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
@@ -61,14 +61,18 @@ _DIM = "\033[2m"
 # Scheme: ~/code/<track>/<domain>/<workspace>.<born>/<repo>
 # A workspace holds 1..N repos. Whole-workspace worktrees live in a hidden
 # .wt/<name>/<repo> inside the workspace (collapsed; never scanned).
-TRACKS = ("crit", "explore", "chore", "side")
 WT_DIR = ".wt"
-# Each track maps to an ANSI code (reusing _COLOR_CODES values).
+
+# Tracks are config-driven (object notation) — see config.DEFAULT_TRACKS and
+# the [[tracks]] override in config.toml. Everything below derives from the
+# loaded list, so adding a track needs zero code changes.
+_TRACKS_CFG = load_tracks()
+TRACKS = tuple(t["name"] for t in _TRACKS_CFG)
+# Each track maps to an ANSI code (reusing _COLOR_CODES values; unknown ansi
+# names fall back to indigo).
 _TRACK_COLORS = {
-    "crit": _COLOR_CODES["red"],
-    "explore": _COLOR_CODES["blue"],   # cyan-ish; blue is closest in the base set
-    "chore": _COLOR_CODES["yellow"],
-    "side": _COLOR_CODES["purp"],
+    t["name"]: _COLOR_CODES.get(t.get("ansi", "indigo"), _COLOR_CODES["indigo"])
+    for t in _TRACKS_CFG
 }
 _BORN_RE = re.compile(r"^(?P<slug>.+)\.(?P<born>\d{4}\.q[1-4])$")
 
@@ -453,12 +457,17 @@ def _repos_pick(results, config):
         curses.init_pair(6, curses.COLOR_BLUE, -1)
         curses.init_pair(7, curses.COLOR_MAGENTA, -1)
 
+        # ANSI-name -> curses pair. Tracks map through their `ansi` field, so a
+        # config-added track (e.g. main=green) picks up the right pair for free.
+        _ansi_pair = {"red": 5, "blue": 6, "purp": 7, "yellow": 1, "green": 4,
+                      "orange": 1, "indigo": 7}
         group_colors = {
-            # tracks
-            "crit": 5, "explore": 6, "side": 7, "chore": 1,
             # legacy code-<color>
             "red": 5, "blue": 6, "purp": 7, "yellow": 1, "green": 4, "orange": 1,
         }
+        # tracks (derived from config)
+        for _t in _TRACKS_CFG:
+            group_colors[_t["name"]] = _ansi_pair.get(_t.get("ansi", "indigo"), 7)
 
         def _group_color(name):
             for key, pair in group_colors.items():
@@ -1939,10 +1948,8 @@ def cmd_mirror(args, config):
 
 # Hex accents for the VS Code multi-root title bar, keyed by track.
 _TRACK_HEX = {
-    "crit":    {"bar": "#2e1414", "fg": "#e0a0a0"},
-    "explore": {"bar": "#14202e", "fg": "#a0c0e0"},
-    "chore":   {"bar": "#222214", "fg": "#d0d080"},
-    "side":    {"bar": "#141428", "fg": "#a0a0e0"},
+    t["name"]: t.get("hex", {"bar": "#14141e", "fg": "#a0a0c0"})
+    for t in _TRACKS_CFG
 }
 _OVERLAY_MARKER = "generated-by: tt (geno-tt) workspace overlay"
 
