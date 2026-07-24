@@ -8,7 +8,7 @@ import sys
 
 from pathlib import Path
 
-from .config import load_config, resolve_host, SESSIONS_DIR
+from .config import load_config, resolve_host, SESSIONS_DIR, load_tracks
 from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_repos, list_worktrees, add_worktree, remove_worktree, discover_owner_repos, clone_repos, workspace_repo_remotes, spawn_layout, LOCAL_HOSTNAME
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
@@ -53,6 +53,7 @@ _COLOR_CODES = {
     "dead": "\033[90m",
 }
 _ORANGE = "\033[38;5;208m"
+_GREEN = "\033[32m"
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
 _DIM = "\033[2m"
@@ -60,14 +61,18 @@ _DIM = "\033[2m"
 # Scheme: ~/code/<track>/<domain>/<workspace>.<born>/<repo>
 # A workspace holds 1..N repos. Whole-workspace worktrees live in a hidden
 # .wt/<name>/<repo> inside the workspace (collapsed; never scanned).
-TRACKS = ("crit", "explore", "chore", "side")
 WT_DIR = ".wt"
-# Each track maps to an ANSI code (reusing _COLOR_CODES values).
+
+# Tracks are config-driven (object notation) — see config.DEFAULT_TRACKS and
+# the [[tracks]] override in config.toml. Everything below derives from the
+# loaded list, so adding a track needs zero code changes.
+_TRACKS_CFG = load_tracks()
+TRACKS = tuple(t["name"] for t in _TRACKS_CFG)
+# Each track maps to an ANSI code (reusing _COLOR_CODES values; unknown ansi
+# names fall back to indigo).
 _TRACK_COLORS = {
-    "crit": _COLOR_CODES["red"],
-    "explore": _COLOR_CODES["blue"],   # cyan-ish; blue is closest in the base set
-    "chore": _COLOR_CODES["yellow"],
-    "side": _COLOR_CODES["purp"],
+    t["name"]: _COLOR_CODES.get(t.get("ansi", "indigo"), _COLOR_CODES["indigo"])
+    for t in _TRACKS_CFG
 }
 _BORN_RE = re.compile(r"^(?P<slug>.+)\.(?P<born>\d{4}\.q[1-4])$")
 
@@ -452,12 +457,17 @@ def _repos_pick(results, config):
         curses.init_pair(6, curses.COLOR_BLUE, -1)
         curses.init_pair(7, curses.COLOR_MAGENTA, -1)
 
+        # ANSI-name -> curses pair. Tracks map through their `ansi` field, so a
+        # config-added track (e.g. main=green) picks up the right pair for free.
+        _ansi_pair = {"red": 5, "blue": 6, "purp": 7, "yellow": 1, "green": 4,
+                      "orange": 1, "indigo": 7}
         group_colors = {
-            # tracks
-            "crit": 5, "explore": 6, "side": 7, "chore": 1,
             # legacy code-<color>
             "red": 5, "blue": 6, "purp": 7, "yellow": 1, "green": 4, "orange": 1,
         }
+        # tracks (derived from config)
+        for _t in _TRACKS_CFG:
+            group_colors[_t["name"]] = _ansi_pair.get(_t.get("ansi", "indigo"), 7)
 
         def _group_color(name):
             for key, pair in group_colors.items():
@@ -1024,23 +1034,45 @@ def cmd_iterm(args, config):
 
     elif action == "new-task":
         if not name:
-            raise SystemExit("Usage: tt iterm new-task <name>")
-        wid = ia.new_task(name)
-        print(f"Opened task window '{name}' with an orchestrator "
-              f"({_DIM}{wid}{_RESET}).")
-        print(f"{_DIM}It will spawn dot-named tabs as needs surface: "
-              f"tt iterm tab {name}.<aspect> --claude{_RESET}")
+            raise SystemExit("Usage: tt iterm new-task <name> [--cwd <dir>] [--here]")
+        ntp = argparse.ArgumentParser(prog="tt iterm new-task", add_help=False)
+        ntp.add_argument("--cwd", default=None, help="working directory for the orchestrator")
+        ntp.add_argument("--here", action="store_true",
+                         help="add orchestrator as a tab in the current window, not a new one")
+        nta = ntp.parse_args(rest)
+        if nta.here:
+            # Add to current window instead of opening a new one
+            brief = ia.ORCHESTRATOR_SEED.format(name=name)
+            cd_prefix = f"cd {ia.shlex.quote(nta.cwd)} && " if nta.cwd else ""
+            cmd = cd_prefix + "clauded " + ia.shlex.quote(brief)
+            tab_id = ia.add_tab(f"{name}.orchestrator", cmd)
+            print(f"Added orchestrator tab '{name}.orchestrator' to current window"
+                  + (f" (cd {nta.cwd})" if nta.cwd else "") + ".")
+        else:
+            wid = ia.new_task(name, cwd=nta.cwd)
+            print(f"Opened task window '{name}' with an orchestrator "
+                  f"({_DIM}{wid}{_RESET})"
+                  + (f" in {nta.cwd}" if nta.cwd else "") + ".")
+        print(f"{_DIM}Fan-out: tt iterm tab {name}.<aspect> --claude{_RESET}")
 
     elif action == "tab":
         if not name:
-            raise SystemExit("Usage: tt iterm tab <name.aspect> [--claude | --cmd \"…\"]")
+            raise SystemExit("Usage: tt iterm tab <name.aspect> [--claude | --cmd \"…\"] [--cwd <dir>]")
         tp = argparse.ArgumentParser(prog="tt iterm tab", add_help=False)
         tp.add_argument("--claude", action="store_true")
         tp.add_argument("--cmd", default=None)
+        tp.add_argument("--cwd", default=None, help="cd to this dir before running the command")
         ta = tp.parse_args(rest)
-        cmd = "clauded" if ta.claude else ta.cmd
+        base_cmd = "clauded" if ta.claude else ta.cmd
+        if ta.cwd and base_cmd:
+            cmd = f"cd {ia.shlex.quote(ta.cwd)} && {base_cmd}"
+        elif ta.cwd:
+            cmd = f"cd {ia.shlex.quote(ta.cwd)}"
+        else:
+            cmd = base_cmd
         ia.add_tab(name, cmd)
-        print(f"Added tab '{name}'" + (f" running: {cmd}" if cmd else "") + ".")
+        print(f"Added tab '{name}'" + (f" (cd {ta.cwd})" if ta.cwd else "")
+              + (f" running: {base_cmd}" if base_cmd else "") + ".")
 
     elif action == "window":
         if not name:
@@ -1914,6 +1946,127 @@ def cmd_mirror(args, config):
     print(f"  done → {target}:{tgt_abs}")
 
 
+# Hex accents for the VS Code multi-root title bar, keyed by track.
+_TRACK_HEX = {
+    t["name"]: t.get("hex", {"bar": "#14141e", "fg": "#a0a0c0"})
+    for t in _TRACKS_CFG
+}
+_OVERLAY_MARKER = "generated-by: tt (geno-tt) workspace overlay"
+
+
+def _quarter_from_mtime(path: Path) -> str:
+    """Derive a born-quarter from a directory's mtime (born = when it started)."""
+    from datetime import datetime
+    try:
+        d = datetime.fromtimestamp(path.stat().st_mtime)
+        return f"{d.year}.q{(d.month - 1) // 3 + 1}"
+    except OSError:
+        return _current_quarter()
+
+
+def _write_overlay(ws_dir: Path, track: str, *, force: bool = False) -> None:
+    """Write a VS Code multi-root file + CLAUDE.local.md for a workspace dir.
+
+    Self-contained (tt overlay is not yet wired). Scans first-level git repos,
+    writes <workspace>.code-workspace with a track-derived accent and a
+    generated CLAUDE.local.md. Refuses to clobber a hand-written
+    CLAUDE.local.md (one without the generated-by marker) unless force=True.
+    """
+    import json
+    repos = sorted(
+        p.name for p in ws_dir.iterdir()
+        if p.is_dir() and not p.name.startswith(".") and (p / ".git").exists()
+    )
+    accent = _TRACK_HEX.get(track, {"bar": "#14141e", "fg": "#a0a0c0"})
+    ws_file = ws_dir / f"{ws_dir.name.split('.')[0]}.code-workspace"
+    payload = {
+        "folders": [{"path": r} for r in repos],
+        "settings": {
+            "workbench.colorCustomizations": {
+                "titleBar.activeBackground": accent["bar"],
+                "titleBar.activeForeground": accent["fg"],
+            }
+        },
+    }
+    ws_file.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+    claude = ws_dir / "CLAUDE.local.md"
+    if claude.exists() and _OVERLAY_MARKER not in claude.read_text() and not force:
+        print(f"  {_DIM}kept hand-written CLAUDE.local.md (use --force to overwrite){_RESET}")
+    else:
+        repo_list = " · ".join(repos) if repos else "(no repos yet)"
+        claude.write_text(
+            f"# Workspace: {ws_dir.name}\n\n"
+            f"<!-- {_OVERLAY_MARKER} -->\n\n"
+            f"Workspace under the **{track}** track, in the code-org scheme "
+            f"(`~/code/<track>/<domain>/<workspace>.<born>/<repo>`).\n\n"
+            f"## Repos ({len(repos)})\n\n{repo_list}\n\n"
+            f"## Notes\n"
+            f"- This overlay is generated by `tt` — safe to regenerate with `tt overlay`.\n"
+            f"- `tt inv` shows this workspace; whole-workspace worktrees live in `.wt/`.\n"
+        )
+
+
+def cmd_migrate(args, config):
+    """Migrate legacy color-folder workspaces into the code-org scheme.
+
+    tt migrate [--track T] [--domain D] [--apply] [--force]
+
+    Scans ~/code/code-<color>/ for `*-ws` workspace dirs (the old geno-ws
+    layout) and moves each to ~/code/<track>/<domain>/<workspace>.<born>/,
+    then writes the overlay. Dry-run by default; pass --apply to move.
+    Local-only (the legacy color folders never existed on remote hosts).
+    """
+    import shutil
+    track = args.track if args.track in TRACKS else "side"
+    domain = args.domain or "euge"
+    code = Path.home() / "code"
+    legacy = sorted(code.glob("code-*"))
+    if not legacy:
+        print("No legacy code-<color> folders found. Nothing to migrate.")
+        return
+
+    plans = []
+    for color_dir in legacy:
+        if not color_dir.is_dir():
+            continue
+        for ws in sorted(color_dir.iterdir()):
+            if not ws.is_dir():
+                continue
+            # A migratable workspace: name ends in -ws, or has geno-ws metadata.
+            is_ws = ws.name.endswith("-ws") or (ws / ".geno" / "workspace.yaml").exists()
+            if not is_ws:
+                continue
+            name = ws.name[:-3] if ws.name.endswith("-ws") else ws.name
+            born = _quarter_from_mtime(ws)
+            target = code / track / domain / f"{name}.{born}"
+            plans.append((ws, target, color_dir.name))
+
+    if not plans:
+        print("No `*-ws` workspaces found under the color folders. Nothing to migrate.")
+        return
+
+    verb = "Migrating" if args.apply else "Would migrate"
+    print(f"{_BOLD}{verb} {len(plans)} workspace(s) → {track}/{domain}/<name>.<born>{_RESET}")
+    for src, target, color in plans:
+        rel_target = str(target).replace(str(Path.home()), "~")
+        rel_src = str(src).replace(str(Path.home()), "~")
+        if target.exists():
+            print(f"  {_DIM}skip{_RESET} {rel_src}  →  {rel_target} {_DIM}(target exists){_RESET}")
+            continue
+        print(f"  {rel_src}  →  {rel_target}")
+        if args.apply:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(target))
+            _write_overlay(target, track, force=args.force)
+
+    if not args.apply:
+        print(f"\n{_DIM}Dry-run. Re-run with --apply to move, "
+              f"--track/--domain to place them, --force to overwrite overlays.{_RESET}")
+    else:
+        print(f"\n{_GREEN}Done.{_RESET} Run {_BOLD}tt inv{_RESET} to see the migrated workspaces.")
+
+
 def cmd_spawn(args, config):
     """Open a multi-pane tmux session in a workspace (N agents + M shells).
 
@@ -1934,7 +2087,7 @@ def cmd_spawn(args, config):
 
 
 SUBCOMMANDS = {"ls", "kill", "new", "new-project", "wt", "iterm", "tmux", "code", "repos", "inv",
-               "report", "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
+               "report", "ecosystem-clone", "mirror", "migrate", "spawn", "clean", "recover", "tui", "hosts",
                "default", "add-host", "profile", "theme",
                # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task/name' work directly
                "focus", "fork", "tab", "new-task", "name"}
@@ -2025,6 +2178,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt report [--all-hosts]")
         print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
         print("  tt mirror <workspace> <host>")
+        print("  tt migrate [--track T] [--domain D] [--apply]   (legacy color-folder → scheme)")
         print("")
         print("hosts / appearance:")
         print("  tt hosts  tt add-host  tt default  tt profile  tt theme")
@@ -2134,6 +2288,14 @@ def main(argv: list[str] | None = None) -> int:
         mp.add_argument("host")
         mp.add_argument("-w", "--workspace", default=None)
         cmd_mirror(mp.parse_args(argv[1:]), config)
+
+    elif cmd == "migrate":
+        gp = argparse.ArgumentParser(prog="tt migrate", add_help=False)
+        gp.add_argument("--track", default="side")
+        gp.add_argument("--domain", default=None)
+        gp.add_argument("--apply", action="store_true")
+        gp.add_argument("--force", action="store_true")
+        cmd_migrate(gp.parse_args(argv[1:]), config)
 
     elif cmd == "spawn":
         sp = argparse.ArgumentParser(prog="tt spawn", add_help=False)

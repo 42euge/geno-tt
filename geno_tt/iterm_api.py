@@ -388,13 +388,15 @@ def set_window_title(title: str, session_id: str | None = None) -> None:
     _run(_impl)
 
 
-def new_task(name: str, seed: str | None = None) -> str | None:
+def new_task(name: str, seed: str | None = None, cwd: str | None = None) -> str | None:
     """Open a NEW window titled `name` running a Claude orchestrator for the task.
 
     The orchestrator is seeded to grow the window with dot-named tabs per concern.
+    Pass cwd to cd into a directory before launching (avoids starting in ~).
     """
     brief = (seed or ORCHESTRATOR_SEED).format(name=name)
-    launch = "clauded " + shlex.quote(brief)
+    cd_prefix = f"cd {shlex.quote(cwd)} && " if cwd else ""
+    launch = cd_prefix + "clauded " + shlex.quote(brief)
 
     async def _impl(iterm2, conn):
         win = await iterm2.Window.async_create(conn)

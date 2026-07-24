@@ -23,8 +23,25 @@ at SessionStart.
 ```
 ~/code/<track>/<domain>/<workspace>.<born>/<repo>
 ```
-tracks `crit` `explore` `chore` `side`; `born` = the quarter the workspace
-started (never moves); whole-workspace worktrees live in a hidden `.wt/`.
+tracks `main` `crit` `explore` `chore` `side` (configurable — see below); `born`
+= the quarter the workspace started (never moves); whole-workspace worktrees
+live in a hidden `.wt/`.
+
+Tracks are object-notation entries (name + colors), not a hardcoded enum. The
+builtin set lives in `config.DEFAULT_TRACKS`; extend or recolor them in
+`~/.geno/tt/config.toml`:
+
+```toml
+[[tracks]]
+name = "main"
+ansi = "green"                              # key into the base ANSI palette
+hex  = { bar = "#14281a", fg = "#a0e0b0" }  # optional TUI/overlay accent
+```
+
+A `[[tracks]]` entry reusing a builtin name overrides its colors; a new name is
+appended (its order drives display order). Everything downstream (path parsing,
+`new-project` validation, `inv`/TUI coloring, overlay accents) derives from this
+list, so adding a track needs no code change.
 
 ## Skills
 
