@@ -78,8 +78,16 @@ def get_sessions(hostname: str, use_cache: bool = False) -> list[dict]:
                 return []
             raise SystemExit(f"tmux error: {result.stderr.strip()}")
     else:
+        # `tmux ... 2>/dev/null` hides tmux's own stderr, so an unreachable host and
+        # a host with no tmux server both used to land in the `return []` branch and
+        # render as "(no sessions)" — a dead host looked idle. ssh reserves 255 for
+        # its own failures (DNS, refused, auth, timeout) and passes the remote
+        # command's status through otherwise, so 255 is the signal to raise on.
         cmd = ["ssh", hostname, f'tmux list-windows -a -F "{fmt}" 2>/dev/null']
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 255:
+            err = result.stderr.strip().splitlines()
+            raise SystemExit(f"SSH error: {err[-1] if err else f'cannot reach {hostname}'}")
         if result.returncode != 0:
             if "no server running" in result.stderr or not result.stdout.strip():
                 return []

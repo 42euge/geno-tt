@@ -525,3 +525,71 @@ def test_single_line_cache_still_parses(tmp_path):
     data = json.loads(p.read_text())
     write_json(p, data, sort_keys=True)
     assert json.loads(p.read_text()) == {"0": {"folder": "x"}}
+# --- tt tmux ls host visibility ---
+
+def _ls_cfg(**kw):
+    cfg = {"hosts": {"local": "localhost", "z2": "somehost"}, "default_host": "local"}
+    cfg.update(kw)
+    return cfg
+
+
+def _run_ls(monkeypatch, capsys, cfg, **ns):
+    """Run cmd_ls with the network stubbed out."""
+    import argparse
+    from geno_tt import cli
+    monkeypatch.setattr(cli, "get_sessions", lambda h, **k: [])
+    monkeypatch.setattr(cli, "get_remote_home", lambda h: "/home/u")
+    monkeypatch.setattr(cli, "build_session_tree", lambda s, home: s)
+    monkeypatch.setattr(cli, "render_tree", lambda s, a, h: f"{a} ({h})\n  (no sessions)")
+    args = argparse.Namespace(host_alias=None, host=None, folder_filter=None, all=False)
+    for k, v in ns.items():
+        setattr(args, k, v)
+    cli.cmd_ls(args, cfg)
+    return capsys.readouterr().out
+
+
+def test_ls_footer_names_unscanned_hosts(monkeypatch, capsys):
+    """A bare `tt tmux ls` must not let a configured host look dead."""
+    out = _run_ls(monkeypatch, capsys, _ls_cfg())
+    assert "z2" in out and "not scanned" in out
+    assert "--all" in out
+
+
+def test_ls_no_footer_when_host_explicit(monkeypatch, capsys):
+    """Asking for one host means the single-host scope is intentional."""
+    out = _run_ls(monkeypatch, capsys, _ls_cfg(), host_alias="local")
+    assert "not scanned" not in out
+
+
+def test_ls_no_footer_when_only_one_host(monkeypatch, capsys):
+    cfg = {"hosts": {"local": "localhost"}, "default_host": "local"}
+    out = _run_ls(monkeypatch, capsys, cfg)
+    assert "not scanned" not in out
+
+
+def test_ls_all_reports_cause_and_keeps_going(monkeypatch, capsys):
+    """One unreachable host must not hide the healthy ones, and must say why.
+
+    get_sessions raises SystemExit, which is a BaseException — `except Exception`
+    would let it abort the whole walk.
+    """
+    import argparse
+    from geno_tt import cli
+
+    def fake_get_sessions(h, **k):
+        if h == "deadhost":
+            raise SystemExit("SSH error: Could not resolve hostname deadhost")
+        return []
+
+    monkeypatch.setattr(cli, "get_sessions", fake_get_sessions)
+    monkeypatch.setattr(cli, "get_remote_home", lambda h: "/home/u")
+    monkeypatch.setattr(cli, "build_session_tree", lambda s, home: s)
+    monkeypatch.setattr(cli, "render_tree", lambda s, a, h: f"{a} ({h})\n  (no sessions)")
+
+    cfg = {"hosts": {"aaa_dead": "deadhost", "zzz_live": "localhost"}, "default_host": "zzz_live"}
+    cli.cmd_ls(argparse.Namespace(
+        host_alias=None, host=None, folder_filter=None, all=True), cfg)
+    out = capsys.readouterr().out
+
+    assert "Could not resolve hostname deadhost" in out, "cause was swallowed"
+    assert "zzz_live" in out, "dead host aborted the walk before the live one"

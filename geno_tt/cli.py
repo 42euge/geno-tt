@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 
 from pathlib import Path, PurePosixPath
@@ -1394,6 +1395,40 @@ def _win_of_current(sessions: list[dict]) -> str | None:
     return sessions[0]["window_id"] if sessions else None
 
 
+def cmd_version():
+    """Report the running version AND where it came from.
+
+    The package version alone is ambiguous once you install from branches: three
+    branches can all say 0.7.1. What actually answers "which code am I running"
+    is the import path plus that checkout's git state, so print both.
+    """
+    from . import __version__
+
+    print(f"geno-tt {__version__}")
+
+    src = Path(__file__).resolve().parent
+    print(f"  source   {src}")
+
+    try:
+        def git(*a):
+            r = subprocess.run(["git", "-C", str(src), *a],
+                               capture_output=True, text=True, timeout=5)
+            return r.stdout.strip() if r.returncode == 0 else ""
+
+        branch = git("rev-parse", "--abbrev-ref", "HEAD")
+        sha = git("rev-parse", "--short", "HEAD")
+        if branch:
+            dirty = " +dirty" if git("status", "--porcelain") else ""
+            print(f"  branch   {branch} @ {sha}{dirty}")
+            subject = git("log", "-1", "--format=%s")
+            if subject:
+                print(f"  commit   {subject}")
+        else:
+            print("  branch   (not a git checkout)")
+    except Exception as e:
+        print(f"  branch   (unavailable: {e})")
+
+
 def cmd_ls(args, config):
     """List all tmux sessions as a tree."""
     host_alias = getattr(args, "host_alias", None)
@@ -1421,8 +1456,15 @@ def cmd_ls(args, config):
                     output = output.replace(f"{a} ({h})", f"{a} ({h}){default_mark}", 1)
                 print(output)
                 print()
-            except Exception:
-                print(f"{a} ({h}){default_mark}: unreachable\n")
+            # SystemExit is a BaseException, so `except Exception` would let
+            # get_sessions' SystemExit escape and abort the whole walk — one dead
+            # host would hide every healthy one after it alphabetically.
+            except (Exception, SystemExit) as e:
+                # Show why, not just "unreachable" — a timeout, a DNS failure and
+                # a missing tmux binary are different problems with different fixes.
+                reason = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+                reason = reason.removeprefix("SSH error: ").removeprefix("tmux error: ")
+                print(f"{a} ({h}){default_mark}: unreachable — {reason}\n")
         return
 
     if explicit_host:
@@ -1441,6 +1483,17 @@ def cmd_ls(args, config):
             return
 
     print(render_tree(sessions, alias, hostname))
+
+    # A bare `tt tmux ls` only ever shows one host, so a configured host with
+    # live sessions reads as dead — nothing on screen says it wasn't scanned.
+    # Name the others and how to see them. Suppressed when the host was asked
+    # for explicitly, since then the single-host scope is the point.
+    if not explicit_host and not host_alias:
+        others = sorted(a for a in hosts if a != alias)
+        if others:
+            print(f"\n{len(others)} other host{'s' if len(others) > 1 else ''} "
+                  f"configured ({', '.join(others)}) — not scanned. "
+                  f"Use `tt tmux ls --all` or `tt tmux ls <host>`.")
 
 
 def cmd_kill(args, config):
@@ -2622,6 +2675,10 @@ def main(argv: list[str] | None = None) -> int:
         return
 
     cmd = argv[0]
+
+    if cmd in ("-V", "--version", "version"):
+        cmd_version()
+        return
 
     if cmd in ("-h", "--help"):
         print("tt — terminal + workspace orchestration\n")
