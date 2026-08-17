@@ -593,3 +593,26 @@ def test_ls_all_reports_cause_and_keeps_going(monkeypatch, capsys):
 
     assert "Could not resolve hostname deadhost" in out, "cause was swallowed"
     assert "zzz_live" in out, "dead host aborted the walk before the live one"
+def test_default_repo_dirs_cover_scheme_and_legacy_depth():
+    from geno_tt.remote import DEFAULT_REPO_DIRS
+    # scheme: code/<track>/<domain>/<workspace>.<born>/<repo> == 4 levels
+    scheme = [d for d in DEFAULT_REPO_DIRS if d.startswith("~/code/")]
+    assert scheme, "no scheme-depth pattern in DEFAULT_REPO_DIRS"
+    assert all(len(p.strip("/").split("/")[2:]) == 4 for p in scheme)
+    # legacy color folders stay covered
+    assert any(d.startswith("~/code-") for d in DEFAULT_REPO_DIRS)
+
+
+def test_default_repo_dirs_glob_matches_this_repo(tmp_path, monkeypatch):
+    import glob as _glob
+    from geno_tt.remote import DEFAULT_REPO_DIRS
+    home = tmp_path
+    (home / "code/crit/ngrt/deploy.2026.q2/main").mkdir(parents=True)
+    (home / "code-blue/legacy-repo").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    found = set()
+    for pattern in DEFAULT_REPO_DIRS:
+        import os
+        found |= {p.rstrip("/") for p in _glob.glob(os.path.expanduser(pattern))}
+    assert str(home / "code/crit/ngrt/deploy.2026.q2/main") in found
+    assert str(home / "code-blue/legacy-repo") in found

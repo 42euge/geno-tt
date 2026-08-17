@@ -13,6 +13,12 @@ CACHE_TTL = 60  # seconds
 
 LOCAL_HOSTNAME = "localhost"
 
+# Where repos live, by depth. The code-org scheme puts a repo 4 levels under
+# ~/code (<track>/<domain>/<workspace>.<born>/<repo>); the deprecated
+# color-folder layout puts it 2 levels under ~/code-<color>. Scan both so
+# `tt inv` / `tt report` see a conformant tree without hand-editing config.
+DEFAULT_REPO_DIRS = ["~/code/*/*/*/*/", "~/code-*/*/"]
+
 
 def _is_local(hostname: str) -> bool:
     return hostname == LOCAL_HOSTNAME
@@ -440,11 +446,13 @@ def _repos_cache_path(host: str) -> Path:
 def list_repos(hostname: str, config: dict | None = None, write_cache: bool = True) -> list[dict]:
     """List directories under configured repo_dirs on a host (local or remote).
 
-    By default scans ~/code*/*/ unless repo_dirs is set in config.
+    By default scans both the code-org scheme depth
+    (~/code/<track>/<domain>/<workspace>.<born>/<repo>) and the legacy
+    color-folder depth (~/code-*/<repo>), unless repo_dirs is set in config.
     Returns list of dicts: {"path": str, "last_accessed": str (ISO timestamp or "unknown")}.
     """
-    repo_dirs = ["~/code*/*/"]
-    if config and "repo_dirs" in config:
+    repo_dirs = list(DEFAULT_REPO_DIRS)
+    if config and config.get("repo_dirs"):
         repo_dirs = config["repo_dirs"]
 
     if _is_local(hostname):
