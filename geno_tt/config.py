@@ -1,11 +1,22 @@
 """Config loading from ~/.geno/tt/config.toml."""
 
+import json
 import tomllib
 from pathlib import Path
 
 TT_HOME = Path.home() / ".geno" / "tt"
 CONFIG_PATH = TT_HOME / "config.toml"
 SESSIONS_DIR = TT_HOME / "sessions"
+
+
+def write_json(path, obj, sort_keys: bool = False):
+    """Write JSON state readably: indented, newline-terminated.
+
+    Caches and state files under ~/.geno/tt/ get large enough (tens of KB) that
+    a single-line dump is impractical to eyeball or diff when debugging. Pass
+    sort_keys for mappings whose key order carries no meaning.
+    """
+    Path(path).write_text(json.dumps(obj, indent=2, sort_keys=sort_keys) + "\n")
 
 
 def load_config() -> dict:

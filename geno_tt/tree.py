@@ -6,6 +6,8 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from .config import write_json
+
 CACHE_DIR = Path("/tmp")
 CACHE_TTL = 60
 
@@ -98,8 +100,7 @@ def _folders_cache_path(host: str) -> Path:
 
 
 def write_folders_cache(host: str, mapping: dict[str, str]):
-    with open(_folders_cache_path(host), "w") as f:
-        json.dump(mapping, f)
+    write_json(_folders_cache_path(host), mapping, sort_keys=True)
 
 
 def read_folders_cache(host: str) -> dict[str, str] | None:

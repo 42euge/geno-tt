@@ -481,3 +481,47 @@ def test_code_list_open_refreshes_and_shows_live_registry(monkeypatch, capsys):
     assert "geno.geno-tt" in output
     assert "geno.geno-dev" in output
     assert "[23]" in output
+def test_write_json_is_readable_and_newline_terminated(tmp_path):
+    from geno_tt.config import write_json
+    p = tmp_path / "cache.json"
+    write_json(p, [{"path": "/a", "last_accessed": "unknown"}])
+    text = p.read_text()
+    assert text.endswith("\n")
+    assert text.count("\n") > 1, "single-line dump — indent lost"
+    import json
+    assert json.loads(text) == [{"path": "/a", "last_accessed": "unknown"}]
+
+
+def test_write_json_sort_keys_opt_in(tmp_path):
+    from geno_tt.config import write_json
+    import json
+    obj = {"z": 1, "a": 2}
+    unsorted, sorted_ = tmp_path / "u.json", tmp_path / "s.json"
+    write_json(unsorted, obj)
+    write_json(sorted_, obj, sort_keys=True)
+    assert list(json.loads(unsorted.read_text())) == ["z", "a"]
+    assert list(json.loads(sorted_.read_text())) == ["a", "z"]
+
+
+def test_no_bare_json_dump_in_cache_writers():
+    """Cache/state writers must go through write_json, not bare json.dump."""
+    import pathlib
+    pkg = pathlib.Path(__file__).resolve().parent.parent / "geno_tt"
+    offenders = [
+        f"{f.name}:{i}"
+        for f in pkg.glob("*.py")
+        for i, line in enumerate(f.read_text().splitlines(), 1)
+        if "json.dump(" in line  # json.dumps( is fine — it takes explicit indent
+    ]
+    assert not offenders, f"bare json.dump found: {offenders}"
+
+
+def test_single_line_cache_still_parses(tmp_path):
+    """Existing one-line caches stay readable; formatting is backward-compatible."""
+    import json
+    from geno_tt.config import write_json
+    p = tmp_path / "legacy.json"
+    p.write_text(json.dumps({"0": {"folder": "x"}}))  # old bare-dump shape
+    data = json.loads(p.read_text())
+    write_json(p, data, sort_keys=True)
+    assert json.loads(p.read_text()) == {"0": {"folder": "x"}}

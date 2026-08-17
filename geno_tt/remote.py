@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from .config import TT_HOME
+from .config import TT_HOME, write_json
 
 CACHE_DIR = Path("/tmp")
 CACHE_TTL = 60  # seconds
@@ -55,8 +55,7 @@ def _read_cache(host: str) -> list[dict] | None:
 
 
 def _write_cache(host: str, sessions: list[dict]):
-    with open(_cache_path(host), "w") as f:
-        json.dump(sessions, f)
+    write_json(_cache_path(host), sessions)
 
 
 def get_sessions(hostname: str, use_cache: bool = False) -> list[dict]:
@@ -474,8 +473,7 @@ def list_repos(hostname: str, config: dict | None = None, write_cache: bool = Tr
 
     repos.sort(key=lambda r: r["path"])
     if write_cache:
-        with open(_repos_cache_path(hostname), "w") as f:
-            json.dump(repos, f)
+        write_json(_repos_cache_path(hostname), repos)
     return repos
 
 
@@ -499,8 +497,7 @@ def _list_local_repos(repo_dirs: list[str], hostname: str, write_cache: bool) ->
 
     repos.sort(key=lambda r: r["path"])
     if write_cache:
-        with open(_repos_cache_path(hostname), "w") as f:
-            json.dump(repos, f)
+        write_json(_repos_cache_path(hostname), repos)
     return repos
 
 
@@ -531,9 +528,7 @@ def save_last_session(folder_name: str, hostname: str, session_name: str):
     """Save last-attached session info for recovery."""
     path = _last_session_path(folder_name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    import json as _json
-    with open(path, "w") as f:
-        _json.dump({"hostname": hostname, "session_name": session_name}, f)
+    write_json(path, {"hostname": hostname, "session_name": session_name}, sort_keys=True)
 
 
 def read_last_session(folder_name: str) -> dict | None:
@@ -577,8 +572,7 @@ def save_tab_session(hostname: str, session_name: str, folder_name: str):
         with open(path) as f:
             data = json.load(f)
     data[tid] = {"hostname": hostname, "session_name": session_name, "folder": folder_name}
-    with open(path, "w") as f:
-        json.dump(data, f)
+    write_json(path, data, sort_keys=True)
 
 
 def read_tab_session() -> dict | None:
