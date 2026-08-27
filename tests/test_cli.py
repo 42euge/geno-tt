@@ -1,6 +1,9 @@
 """Smoke tests for the tt CLI package."""
+import argparse
 import re
-from geno_tt.cli import _parse_rel, _current_quarter
+import subprocess
+
+from geno_tt.cli import _parse_rel, _current_quarter, cmd_code
 
 
 def test_parse_rel_scheme():
@@ -16,3 +19,48 @@ def test_parse_rel_legacy():
 
 def test_quarter_format():
     assert re.match(r"^\d{4}\.q[1-4]$", _current_quarter())
+
+
+def test_code_opens_an_absolute_local_path_without_remote_ssh(
+    monkeypatch, tmp_path, capsys,
+):
+    calls = []
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda argv, **kwargs: calls.append((argv, kwargs)),
+    )
+    config = {
+        "default_host": "local",
+        "hosts": {"local": "localhost"},
+    }
+
+    cmd_code(argparse.Namespace(target=str(tmp_path)), config)
+
+    assert calls[0][0] == ["code", "--new-window", str(tmp_path)]
+    assert "vscode-remote" not in " ".join(calls[0][0])
+    assert capsys.readouterr().out == f"Opening VS Code: {tmp_path}\n"
+
+
+def test_code_keeps_remote_ssh_for_a_remote_host(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda argv, **kwargs: calls.append((argv, kwargs)),
+    )
+    config = {
+        "default_host": "build",
+        "hosts": {"build": "build.example.com"},
+    }
+
+    cmd_code(argparse.Namespace(target="/srv/project"), config)
+
+    assert calls[0][0] == [
+        "code",
+        "--folder-uri",
+        "vscode-remote://ssh-remote+build.example.com/srv/project",
+    ]
+    assert capsys.readouterr().out == (
+        "Opening VS Code: build.example.com:/srv/project\n"
+    )
