@@ -1822,13 +1822,18 @@ def cmd_theme(args, config):
 
 
 def cmd_code(args, config):
-    """Open VS Code connected to a remote folder via SSH."""
+    """Open a local folder directly or a remote folder via SSH."""
     alias, hostname = resolve_host(config)
     target = args.target
 
-    if target.startswith("~/") or target.startswith("/"):
+    if target.startswith("~/"):
+        if hostname == LOCAL_HOSTNAME:
+            folder = os.path.expanduser(target)
+        else:
+            folder = get_remote_home(hostname) + target[1:]
+    elif target.startswith("/"):
         local_home = os.path.expanduser("~")
-        if target.startswith(local_home + "/"):
+        if hostname != LOCAL_HOSTNAME and target.startswith(local_home + "/"):
             remote_home = get_remote_home(hostname)
             folder = remote_home + target[len(local_home):]
         else:
@@ -1842,9 +1847,20 @@ def cmd_code(args, config):
             raise SystemExit(f"No repo found for '{target}'. Check tt repos.")
 
     import subprocess
-    uri = f"vscode-remote://ssh-remote+{hostname}{folder}"
-    print(f"Opening VS Code: {hostname}:{folder}")
-    subprocess.Popen(["code", "--folder-uri", uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if hostname == LOCAL_HOSTNAME:
+        if not Path(folder).exists():
+            raise SystemExit(f"Local path does not exist: {folder}")
+        print(f"Opening VS Code: {folder}")
+        command = ["code", "--new-window", folder]
+    else:
+        uri = f"vscode-remote://ssh-remote+{hostname}{folder}"
+        print(f"Opening VS Code: {hostname}:{folder}")
+        command = ["code", "--folder-uri", uri]
+    subprocess.Popen(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def cmd_report(args, config):
