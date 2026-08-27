@@ -23,6 +23,7 @@ from geno_tt.cli import (
     cmd_scaffold,
     cmd_workspaces,
     main,
+    cmd_registry,
 )
 
 
@@ -616,3 +617,33 @@ def test_default_repo_dirs_glob_matches_this_repo(tmp_path, monkeypatch):
         found |= {p.rstrip("/") for p in _glob.glob(os.path.expanduser(pattern))}
     assert str(home / "code/crit/ngrt/deploy.2026.q2/main") in found
     assert str(home / "code-blue/legacy-repo") in found
+
+def test_registry_refresh_targets_the_selected_host(monkeypatch, capsys):
+    calls = []
+
+    class FakeRegistry:
+        display_path = "build.example.com:~/.geno/tt/workspaces.json"
+
+        def __init__(self, hostname):
+            calls.append(("host", hostname))
+
+        def load(self, *, refresh):
+            calls.append(("load", refresh))
+            return {"workspaces": [{}, {}]}
+
+    monkeypatch.setattr(
+        "geno_tt.workspace_registry.WorkspaceRegistry",
+        FakeRegistry,
+    )
+    config = {
+        "default_host": "build",
+        "hosts": {"build": "build.example.com"},
+    }
+
+    cmd_registry(argparse.Namespace(action="refresh"), config)
+
+    assert calls == [("host", "build.example.com"), ("load", True)]
+    assert capsys.readouterr().out == (
+        "Refreshed 2 workspace(s) in "
+        "build.example.com:~/.geno/tt/workspaces.json\n"
+    )

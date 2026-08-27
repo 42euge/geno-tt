@@ -1545,15 +1545,11 @@ def _resolve_repo_index(idx: int, config: dict) -> tuple[str, str, str]:
     hosts = config.get("hosts", {})
     default_alias = config.get("default_host")
 
-    def _extract(entry) -> str:
-        """Handle both old (str) and new (dict) cache formats."""
-        return entry["path"] if isinstance(entry, dict) else entry
-
     # First try default host only (matches tt repos without --all)
     if default_alias and default_alias in hosts:
-        cached = read_repos_cache(hosts[default_alias])
-        if cached and 0 <= idx < len(cached):
-            folder = _extract(cached[idx])
+        registered = list_repos(hosts[default_alias], config=config)
+        if registered and 0 <= idx < len(registered):
+            folder = registered[idx]["path"]
             leaf = folder.rsplit("/", 1)[-1]
             return hosts[default_alias], folder, leaf
 
@@ -1561,14 +1557,14 @@ def _resolve_repo_index(idx: int, config: dict) -> tuple[str, str, str]:
     global_idx = 0
     for a in sorted(hosts):
         h = hosts[a]
-        cached = read_repos_cache(h)
-        if not cached:
+        registered = list_repos(h, config=config)
+        if not registered:
             continue
-        if idx < global_idx + len(cached):
-            folder = _extract(cached[idx - global_idx])
+        if idx < global_idx + len(registered):
+            folder = registered[idx - global_idx]["path"]
             leaf = folder.rsplit("/", 1)[-1]
             return h, folder, leaf
-        global_idx += len(cached)
+        global_idx += len(registered)
 
     raise SystemExit(f"Repo index {idx} out of range. Run tt repos first.")
 
@@ -2519,6 +2515,28 @@ def cmd_workspaces(args, config):
         raise SystemExit(1)
 
 
+def cmd_registry(args, config):
+    """Read or refresh the registry owned by the selected host."""
+    import json
+    from .workspace_registry import WorkspaceRegistry
+
+    _, hostname = resolve_host(config)
+    registry = WorkspaceRegistry(hostname)
+    action = getattr(args, "action", "show")
+    if action == "path":
+        print(registry.display_path)
+        return
+    if action == "refresh":
+        data = registry.load(refresh=True)
+        count = len(data["workspaces"])
+        print(f"Refreshed {count} workspace(s) in {registry.display_path}")
+        return
+    if action == "show":
+        print(json.dumps(registry.load(refresh=False), indent=2))
+        return
+    raise SystemExit("Usage: tt registry [show|refresh|path]")
+
+
 def cmd_report(args, config):
     """Cross-host inventory: render the scheme tree for every configured host."""
     if not config.get("hosts"):
@@ -2613,7 +2631,7 @@ def cmd_spawn(args, config):
     print(f"  attach: tt {session}")
 
 
-SUBCOMMANDS = {"ls", "kill", "new", "new-project", "retire", "workspaces", "wt", "iterm", "tmux", "code", "repos", "inv",
+SUBCOMMANDS = {"ls", "kill", "new", "new-project", "retire", "workspaces", "wt", "iterm", "tmux", "code", "registry", "repos", "inv",
                "report", "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
                "default", "add-host", "profile", "theme",
                # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task/name' work directly
@@ -2712,6 +2730,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt code <repo|workspace> [--theme THEME] [--tag repo=tag]")
         print("  tt code --sync        Register all open VS Code windows")
         print("  tt code --list-open   Refresh and show open VS Code workspaces")
+        print("  tt registry [show|refresh|path]")
         print("  tt report [--all-hosts]")
         print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
         print("  tt mirror <workspace> <host>")
@@ -2910,6 +2929,10 @@ def main(argv: list[str] | None = None) -> int:
                 "[--tag repo=tag] | tt code --list-open | tt code --sync"
             )
         cmd_code(cargs, config)
+
+    elif cmd == "registry":
+        action = argv[1] if len(argv) > 1 else "show"
+        cmd_registry(argparse.Namespace(action=action), config)
 
     elif cmd == "tui":
         from .tui import run_tui
