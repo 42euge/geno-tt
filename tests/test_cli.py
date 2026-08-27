@@ -13,6 +13,7 @@ from geno_tt.cli import (
     _installed_vscode_themes,
     _prepare_code_workspace,
     cmd_code,
+    cmd_registry,
 )
 
 
@@ -152,4 +153,35 @@ def test_code_keeps_remote_ssh_for_a_remote_host(monkeypatch, capsys):
     ]
     assert capsys.readouterr().out == (
         f"Opening VS Code: build.example.com:{target}\n"
+    )
+
+
+def test_registry_refresh_targets_the_selected_host(monkeypatch, capsys):
+    calls = []
+
+    class FakeRegistry:
+        display_path = "build.example.com:~/.geno/tt/workspaces.json"
+
+        def __init__(self, hostname):
+            calls.append(("host", hostname))
+
+        def load(self, *, refresh):
+            calls.append(("load", refresh))
+            return {"workspaces": [{}, {}]}
+
+    monkeypatch.setattr(
+        "geno_tt.workspace_registry.WorkspaceRegistry",
+        FakeRegistry,
+    )
+    config = {
+        "default_host": "build",
+        "hosts": {"build": "build.example.com"},
+    }
+
+    cmd_registry(argparse.Namespace(action="refresh"), config)
+
+    assert calls == [("host", "build.example.com"), ("load", True)]
+    assert capsys.readouterr().out == (
+        "Refreshed 2 workspace(s) in "
+        "build.example.com:~/.geno/tt/workspaces.json\n"
     )

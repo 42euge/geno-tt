@@ -78,8 +78,14 @@ geno-tt/
 
 ## Config + state
 
-Everything lives under `~/.geno/tt/` — `config.toml` (`[hosts]`, `[track_colors]`),
-`sessions/`, `cache/`. Hosts are user-defined (`tt add-host`); nothing is hardcoded.
+Everything lives under `~/.geno/tt/` — `config.toml` (`[hosts]`,
+`[track_colors]`), `sessions/`, and the host-owned `workspaces.json` registry.
+Every configured machine owns exactly one registry at the same path. Inventory
+commands refresh and read that file on the owning host; remote workspace state
+is never served from a Mac-side repo cache. Use `tt registry show|refresh|path`
+and `tt -H <host> registry show|refresh|path` to inspect it directly.
+
+Hosts are user-defined (`tt add-host`); nothing is hardcoded.
 
 ## Conventions
 

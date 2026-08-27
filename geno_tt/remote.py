@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 from .config import TT_HOME
+from .workspace_registry import RegistryError, WorkspaceRegistry
 
 CACHE_DIR = Path("/tmp")
 CACHE_TTL = 60  # seconds
@@ -418,97 +419,25 @@ def remove_worktree(hostname: str, ws_abs: str, name: str, repos: list[str]):
     _ssh_run(hostname, "\n".join(lines))
 
 
-def _repos_cache_path(host: str) -> Path:
-    cache_dir = TT_HOME / "cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / f"repos_{host}.json"
-
-
 def list_repos(hostname: str, config: dict | None = None, write_cache: bool = True) -> list[dict]:
-    """List directories under configured repo_dirs on a host (local or remote).
+    """Return repos from the owning host's freshly rebuilt registry.
 
-    By default scans ~/code*/*/ unless repo_dirs is set in config.
-    Returns list of dicts: {"path": str, "last_accessed": str (ISO timestamp or "unknown")}.
+    ``config`` and ``write_cache`` remain accepted for caller compatibility;
+    repository discovery no longer reads or writes host mirrors under the
+    local cache directory.
     """
-    repo_dirs = ["~/code*/*/"]
-    if config and "repo_dirs" in config:
-        repo_dirs = config["repo_dirs"]
-
-    if _is_local(hostname):
-        return _list_local_repos(repo_dirs, hostname, write_cache)
-
-    # Get paths and last-access times in one SSH call
-    # stat -c '%X %n' gives epoch access-time + path on Linux
-    stat_parts = [f"stat -c '%X %n' {d} 2>/dev/null" for d in repo_dirs]
-    remote_cmd = "; ".join(stat_parts)
-
-    result = subprocess.run(
-        ["ssh", hostname, remote_cmd],
-        capture_output=True, text=True, timeout=10,
-    )
-    if not result.stdout.strip():
-        return []
-
-    repos = []
-    seen = set()
-    for line in result.stdout.strip().splitlines():
-        parts = line.split(" ", 1)
-        if len(parts) == 2 and parts[0].isdigit():
-            epoch, path = int(parts[0]), parts[1].rstrip("/")
-            if path not in seen:
-                seen.add(path)
-                from datetime import datetime, timezone
-                ts = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
-                repos.append({"path": path, "last_accessed": ts})
-        else:
-            path = line.strip().rstrip("/")
-            if path and path not in seen:
-                seen.add(path)
-                repos.append({"path": path, "last_accessed": "unknown"})
-
-    repos.sort(key=lambda r: r["path"])
-    if write_cache:
-        with open(_repos_cache_path(hostname), "w") as f:
-            json.dump(repos, f)
-    return repos
-
-
-def _list_local_repos(repo_dirs: list[str], hostname: str, write_cache: bool) -> list[dict]:
-    """List local repos using Python glob + os.stat (avoids platform-specific stat flags)."""
-    import glob as _glob
-    from datetime import datetime, timezone
-
-    repos = []
-    seen: set[str] = set()
-    for pattern in repo_dirs:
-        for path in sorted(_glob.glob(os.path.expanduser(pattern))):
-            path = path.rstrip("/")
-            if path not in seen:
-                seen.add(path)
-                try:
-                    ts = datetime.fromtimestamp(os.stat(path).st_atime, tz=timezone.utc).isoformat()
-                except OSError:
-                    ts = "unknown"
-                repos.append({"path": path, "last_accessed": ts})
-
-    repos.sort(key=lambda r: r["path"])
-    if write_cache:
-        with open(_repos_cache_path(hostname), "w") as f:
-            json.dump(repos, f)
-    return repos
+    try:
+        return WorkspaceRegistry(hostname).repos(refresh=True)
+    except RegistryError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def read_repos_cache(hostname: str) -> list[dict] | None:
-    """Read repos cache. No TTL — indices stay stable until tt repos is re-run."""
-    path = _repos_cache_path(hostname)
-    if not path.exists():
+    """Compatibility shim: read the owning host registry, never a local mirror."""
+    try:
+        return WorkspaceRegistry(hostname).repos(refresh=False)
+    except RegistryError:
         return None
-    with open(path) as f:
-        data = json.load(f)
-    # Migration: handle old cache format (list of strings)
-    if data and isinstance(data[0], str):
-        return [{"path": p, "last_accessed": "unknown"} for p in data]
-    return data
 
 
 def _last_session_path(folder_name: str) -> Path:
