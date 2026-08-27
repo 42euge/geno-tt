@@ -90,7 +90,8 @@ tt -H build spawn docs --agents 2 --shells 1
 There is one important namespace distinction:
 
 ```bash
-tt ls                 # local iTerm2 windows, tabs, panes, jobs, and CWDs
+tt ls                  # workspace inventory (`tt inv` is an alias)
+tt iterm ls            # local iTerm2 windows, tabs, panes, jobs, and CWDs
 tt tmux ls             # tmux sessions on the default host
 tt tmux ls --all       # tmux sessions on every configured host
 ```
@@ -99,7 +100,7 @@ Common workflows:
 
 ```bash
 # Workspaces and editors
-tt inv [-t TRACK] [-d DOMAIN] [--expand]
+tt ls [-t TRACK] [-d DOMAIN] [--expand]
 tt repos [--all | -g GROUP | -s TERM | -i]
 tt new-project <track>.<domain>.<workspace>[.<repo>]
 tt retire [<workspace>] --yes
@@ -116,10 +117,10 @@ tt wt retire <name> [--discard] --yes
 tt wt ls --retired
 
 # iTerm2
-tt name
-tt focus <dot.name>
-tt new-task <name>
-tt tab <name.aspect> --claude
+tt iterm name
+tt iterm focus <dot.name>
+tt iterm new-task <name>
+tt iterm tab <name.aspect> --claude
 tt iterm group _ --dry-run
 
 # tmux
