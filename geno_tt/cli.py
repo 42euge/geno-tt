@@ -408,7 +408,7 @@ def _repos_inv(results, track_filter=None, domain_filter=None, expand=False):
                             print(f"        {_DIM}└{_RESET} {mark}")
         print()
 
-    print(f"  {_DIM}tt inv -t <track> | -d <domain> | --expand   ·   tt wt ls (in a workspace){_RESET}")
+    print(f"  {_DIM}tt ls -t <track> | -d <domain> | --expand   ·   tt wt ls (in a workspace){_RESET}")
 
 
 def _repos_plain(results):
@@ -418,6 +418,31 @@ def _repos_plain(results):
             continue
         for r in repo_list:
             print(f"{r['idx']}\t{r['group']}\t{r['leaf']}\t{r['session_count']}\t{r['age']}")
+
+
+def _workspaces_plain(results, track_filter=None, domain_filter=None):
+    """Pipe-safe workspace inventory: one tab-separated row per workspace."""
+    for alias, _hostname, repo_list in results:
+        if not repo_list:
+            continue
+
+        workspaces = {}
+        for row in repo_list:
+            if not row["track"]:
+                continue
+            if track_filter and row["track"] != track_filter:
+                continue
+            if domain_filter and row["domain"] != domain_filter:
+                continue
+            name = f"{row['workspace']}.{row['born']}" if row["born"] else row["workspace"]
+            key = (row["track"], row["domain"], name)
+            summary = workspaces.setdefault(key, {"repos": 0, "sessions": 0})
+            summary["repos"] += 1
+            summary["sessions"] += row["session_count"]
+
+        for (track, domain, name), summary in sorted(workspaces.items()):
+            print(f"{alias}\t{track}\t{domain}\t{name}\t"
+                  f"{summary['repos']}\t{summary['sessions']}")
 
 
 def _repos_pick(results, config):
@@ -693,7 +718,8 @@ def cmd_inv(args, config):
         return
     results = _repos_data(config)
     if not sys.stdout.isatty():
-        _repos_plain(results)
+        _workspaces_plain(results, track_filter=getattr(args, "track", None),
+                          domain_filter=getattr(args, "domain", None))
         return
     _repos_inv(results, track_filter=getattr(args, "track", None),
                domain_filter=getattr(args, "domain", None),
@@ -774,7 +800,7 @@ def _resolve_workspace(hostname, target, config):
             ws_abs = path.rsplit("/", 1)[0]
             seen[ws_abs] = ws_seg
     if not seen:
-        raise SystemExit(f"No workspace matching '{target}' on host. Try tt inv.")
+        raise SystemExit(f"No workspace matching '{target}' on host. Try tt ls.")
     if len(seen) > 1:
         opts = ", ".join(sorted(seen.values()))
         raise SystemExit(f"'{target}' is ambiguous: {opts}. Use the full <name>.<born>.")
@@ -927,7 +953,7 @@ def cmd_iterm(args, config):
             else:
                 print(f"  {_DIM}  {t['tty']:<12} {job:<12} {t['cwd']}{_RESET}")
         if unnamed_count:
-            print(f"\n{_YELLOW}{unnamed_count} unnamed tab(s) — run: tt name{_RESET}")
+            print(f"\n{_YELLOW}{unnamed_count} unnamed tab(s) — run: tt iterm name -i{_RESET}")
 
     elif action == "group":
         dry = "--dry-run" in rest
@@ -1268,7 +1294,8 @@ def cmd_kill(args, config):
             print(f"  Killed: {name}")
         return
 
-    raise SystemExit(f"Unknown target '{target}'. Use a session number or alpha folder ID from tt ls.")
+    raise SystemExit(
+        f"Unknown target '{target}'. Use a session number or alpha folder ID from tt tmux ls.")
 
 
 def _resolve_repo_index(idx: int, config: dict) -> tuple[str, str, str]:
@@ -1324,7 +1351,7 @@ def cmd_new(args, config):
         remote_home = get_remote_home(hostname)
         rel_path = folder.replace(remote_home + "/", "").replace(remote_home, "~")
     else:
-        # Try alpha folder ID from tt ls cache
+        # Try alpha folder ID from tt tmux ls cache
         cached = read_folders_cache(hostname)
         if cached and target in cached:
             rel_path = cached[target]
@@ -1367,7 +1394,7 @@ def cmd_new(args, config):
 
 
 def _resolve_alpha_to_sessions(target: str, hostname: str, sessions: list[dict]) -> list[dict] | None:
-    """If target is an alpha ID from tt ls, return matching sessions."""
+    """If target is an alpha ID from tt tmux ls, return matching sessions."""
     cached = read_folders_cache(hostname)
     if not cached or target not in cached:
         return None
@@ -1535,7 +1562,7 @@ def cmd_attach(args, config):
 
 def _resolve_folder_target(target: str, hostname: str, sessions: list[dict]) -> list[str]:
     """Resolve a clean target (alpha ID or folder name) to list of rel_paths."""
-    # Try alpha ID from tt ls cache
+    # Try alpha ID from tt tmux ls cache
     cached = read_folders_cache(hostname)
     if cached and target in cached:
         return [cached[target]]
@@ -1567,7 +1594,7 @@ def cmd_clean(args, config):
     if target:
         target_paths = _resolve_folder_target(target, hostname, sessions)
         if not target_paths:
-            raise SystemExit(f"No folder found for '{target}'. Run tt ls first.")
+            raise SystemExit(f"No folder found for '{target}'. Run tt tmux ls first.")
         groups = {p: groups[p] for p in target_paths if p in groups}
 
     to_kill = []
@@ -2160,11 +2187,15 @@ def cmd_spawn(args, config):
     print(f"  attach: tt {session}")
 
 
-SUBCOMMANDS = {"ls", "kill", "new", "new-project", "wt", "iterm", "tmux", "code", "registry", "repos", "inv",
-               "report", "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
-               "default", "add-host", "profile", "theme",
-               # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task/name' work directly
-               "focus", "fork", "tab", "new-task", "name"}
+_MOVED_ITERM_COMMANDS = {"focus", "fork", "tab", "new-task", "name"}
+
+
+def _parse_inventory_args(prog: str, argv: list[str]):
+    parser = argparse.ArgumentParser(prog=prog, add_help=False)
+    parser.add_argument("-t", "--track", default=None)
+    parser.add_argument("-d", "--domain", default=None)
+    parser.add_argument("--expand", "-e", action="store_true")
+    return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2224,14 +2255,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if cmd in ("-h", "--help"):
         print("tt — terminal + workspace orchestration\n")
+        print("workspace:")
+        print("  tt ls [-t TRACK] [-d DOMAIN] [--expand]")
+        print("                       List all workspaces (tt inv is an alias)")
+        print("  tt new-project <track>.<domain>.<workspace>")
+        print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
+        print("  tt wt fanout <N> <prompt…>")
+        print("  tt repos [--all]")
+        print("  tt code <repo|workspace> [--theme THEME] [--tag repo=tag]")
+        print("  tt registry [show|refresh|path]")
+        print("  tt report [--all-hosts]")
+        print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
+        print("  tt mirror <workspace> <host>")
+        print("")
         print("iTerm (local):")
-        print("  tt ls                List iTerm2 tabs (dot-notation managed tabs)")
-        print("  tt focus <node>      Raise the tab matching a dot-notation node")
-        print("  tt fork [--node N] [--new]  Split a pane + open Claude in the new half")
-        print("  tt new-task <name>   New iTerm2 window + Claude orchestrator")
-        print("  tt tab <name> [--claude]    Add a dot-named tab (fan-out)")
         print("  tt iterm ls|group|sort|name|window|resume|reg|focus|fork|new-task|tab")
-        print("                       Full iTerm2 namespace (Python API)")
+        print("                       iTerm2 orchestration (Python API)")
         print("")
         print("tmux (remote):")
         print("  tt tmux ls [--all]   List remote tmux sessions")
@@ -2243,18 +2282,6 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt tmux spawn <ws> [--agents N] [--shells M]")
         print("  tt <target> [sub]    (shorthand attach — still works)")
         print("")
-        print("workspace:")
-        print("  tt inv [-t TRACK] [-d DOMAIN] [--expand]")
-        print("  tt new-project <track>.<domain>.<workspace>")
-        print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
-        print("  tt wt fanout <N> <prompt…>")
-        print("  tt repos [--all]")
-        print("  tt code <repo|workspace> [--theme THEME] [--tag repo=tag]")
-        print("  tt registry [show|refresh|path]")
-        print("  tt report [--all-hosts]")
-        print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
-        print("  tt mirror <workspace> <host>")
-        print("")
         print("hosts / appearance:")
         print("  tt hosts  tt add-host  tt default  tt profile  tt theme")
         print("")
@@ -2262,12 +2289,10 @@ def main(argv: list[str] | None = None) -> int:
         return
 
     if cmd == "ls":
-        # tt ls — show iTerm tabs (local) by default; tt tmux ls for remote sessions
-        iargs = argparse.Namespace(action="ls", name=None, rest=argv[1:])
-        cmd_iterm(iargs, config)
+        cmd_inv(_parse_inventory_args("tt ls", argv[1:]), config)
 
     elif cmd == "tmux":
-        # tt tmux [sub] — explicit remote tmux namespace; routes to old tt ls/attach/kill/etc.
+        # tt tmux [sub] — explicit remote tmux namespace.
         sub = argv[1] if len(argv) > 1 else "ls"
         if sub == "ls":
             parser = argparse.ArgumentParser(prog="tt tmux ls")
@@ -2299,31 +2324,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_attach(argparse.Namespace(target=sub, sub=argv[2] if len(argv) > 2 else None,
                                           host=None, tab=False, cc=None), config)
 
-    elif cmd == "focus":
-        iargs = argparse.Namespace(action="focus", name=argv[1] if len(argv) > 1 else None,
-                                   rest=argv[2:])
-        cmd_iterm(iargs, config)
-
-    elif cmd == "fork":
-        iargs = argparse.Namespace(action="fork", name=argv[1] if len(argv) > 1 else None,
-                                   rest=argv[1:])
-        cmd_iterm(iargs, config)
-
-    elif cmd == "new-task":
-        iargs = argparse.Namespace(action="new-task", name=argv[1] if len(argv) > 1 else None,
-                                   rest=argv[2:])
-        cmd_iterm(iargs, config)
-
-    elif cmd == "tab":
-        iargs = argparse.Namespace(action="tab", name=argv[1] if len(argv) > 1 else None,
-                                   rest=argv[2:])
-        cmd_iterm(iargs, config)
-
-    elif cmd == "name":
-        # tt name [-i] [tty|sel] [dotname]  — shortcut for tt iterm name
-        iargs = argparse.Namespace(action="name", name=argv[1] if len(argv) > 1 else None,
-                                   rest=argv[2:])
-        cmd_iterm(iargs, config)
+    elif cmd in _MOVED_ITERM_COMMANDS:
+        raise SystemExit(f"'tt {cmd}' moved to 'tt iterm {cmd}'.")
 
     elif cmd == "repos":
         rp = argparse.ArgumentParser(prog="tt repos", add_help=False)
@@ -2336,12 +2338,7 @@ def main(argv: list[str] | None = None) -> int:
         cmd_repos(rargs, config)
 
     elif cmd == "inv":
-        ip = argparse.ArgumentParser(prog="tt inv", add_help=False)
-        ip.add_argument("-t", "--track", default=None)
-        ip.add_argument("-d", "--domain", default=None)
-        ip.add_argument("--expand", "-e", action="store_true")
-        iargs = ip.parse_args(argv[1:])
-        cmd_inv(iargs, config)
+        cmd_inv(_parse_inventory_args("tt inv", argv[1:]), config)
 
     elif cmd == "report":
         rp = argparse.ArgumentParser(prog="tt report", add_help=False)

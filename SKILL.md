@@ -7,7 +7,7 @@ description: >-
 allowed-tools: "Bash(tt *) Bash(python3 -m geno_tt *)"
 metadata:
   author: 42euge
-  version: "0.7.0"
+  version: "0.8.0"
 ---
 
 # geno-tt — terminal/session + workspace manager
@@ -35,10 +35,10 @@ the `tt` binary.
 
 ## CLI
 
-- `tt inv [-t TRACK] [-d DOMAIN] [--expand]` — workspace inventory tree
+- `tt ls [-t TRACK] [-d DOMAIN] [--expand]` — workspace inventory tree (`tt inv` is an alias)
 - `tt new-project <track>.<domain>.<workspace>[.<repo>]` — scaffold a workspace
 - `tt wt new|ls|cd|rm <name> [-w WS] [-H <host>]` — whole-workspace worktrees
-- `tt ls | <target> | kill | clean | recover | tui` — remote tmux sessions
+- `tt tmux ls | <target> | kill | clean | recover | tui` — remote tmux sessions
 - `tt repos | code | hosts | add-host | default | theme | profile`
 - `tt iterm ls|group|sort|name|resume|fork` — orchestrate iTerm2 (Python API; `[orchestration]` extra)
 

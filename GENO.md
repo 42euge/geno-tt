@@ -30,7 +30,7 @@ started (never moves); whole-workspace worktrees live in a hidden `.wt/`.
 
 | Sub-skillset | Skills |
 |--------------|--------|
-| sessions | `ls` `attach` `kill` `clean` `recover` `tui` `spawn` |
+| sessions | `tmux ls` `attach` `kill` `clean` `recover` `tui` `spawn` |
 | workspaces | `inventory` `create` `ecosystem-clone` `overlay` `mirror` `report` |
 | worktrees | `new` `ls` `cd` `rm` `fanout` |
 | hosts | `list` `add` `default` |
@@ -47,11 +47,15 @@ group tabs into one window per project (by dot-notation name), order tabs by whe
 each was last worked, name sessions, split-and-fork a Claude session, and re-attach
 idle tabs to their Claude conversations by matching scrollback to `~/.claude`
 history. It talks to the **iTerm2 Python API** (unlike the AppleScript/escape-code
-helpers in `iterm2.py`), so it needs the optional `orchestration` extra:
+helpers in `iterm2.py`), so it needs the optional `orchestration` extra. For a
+geno-tools-managed install:
 
 ```
-pipx inject geno-tt iterm2        # or: pip install 'geno-tt[orchestration]'
+~/.geno-tools/geno-tt/venvs/default/bin/python -m pip install iterm2
 ```
+
+For a standalone pipx install, use `pipx inject geno-tt iterm2`. When the
+package is missing, `tt iterm` prints the exact command for its active Python.
 
 plus iTerm2 ▸ Settings ▸ General ▸ Magic ▸ **Enable Python API**. The core CLI stays
 dependency-free; `tt iterm` prints this hint if the extra or API is missing.

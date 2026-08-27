@@ -2,6 +2,7 @@
 
 import builtins
 import json
+import sys
 
 import pytest
 
@@ -103,3 +104,4 @@ def test_require_iterm2_hint_when_missing(monkeypatch):
     with pytest.raises(SystemExit) as ei:
         iterm_api._require_iterm2()
     assert "iterm2" in str(ei.value).lower()
+    assert sys.executable in str(ei.value)

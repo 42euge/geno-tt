@@ -21,4 +21,4 @@ Splits an iTerm2 pane and opens the new side pane as Claude:
 - **`--new`** — `clauded` with no `-r`: a brand-new Claude session, not resuming anything. Use this to fork a *pane* (get a sibling working session beside an existing one) without carrying over its transcript.
 - **`--node <path>`** — resolve a dot-notation registry node (e.g. `bluebeam.rf`) to its live tab and fork that pane instead of the one you're typing in. Combine with `--new` to open a fresh Claude beside any node from the workspace GUI or CLI, not just your own pane.
 
-Requires the `iterm2` package (`pipx inject geno-tt iterm2`) and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API.
+Requires the `iterm2` package and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API. If the package is missing, `tt iterm` prints the install command for its active Python.

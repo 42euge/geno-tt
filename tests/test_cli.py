@@ -7,11 +7,13 @@ import sys
 
 import pytest
 
+from geno_tt import cli
 from geno_tt.cli import (
     _parse_rel,
     _current_quarter,
     _installed_vscode_themes,
     _prepare_code_workspace,
+    _workspaces_plain,
     cmd_code,
     cmd_registry,
 )
@@ -30,6 +32,66 @@ def test_parse_rel_legacy():
 
 def test_quarter_format():
     assert re.match(r"^\d{4}\.q[1-4]$", _current_quarter())
+
+
+def test_ls_routes_to_workspace_inventory(monkeypatch):
+    called = []
+    monkeypatch.setattr(cli, "load_config", lambda: {"hosts": {}})
+    monkeypatch.setattr(cli, "_detect_session_context", lambda: None)
+    monkeypatch.setattr(cli, "cmd_inv", lambda args, config: called.append((args, config)))
+    monkeypatch.setattr(cli, "cmd_iterm", lambda *_: pytest.fail("ls routed to iTerm"))
+
+    assert cli.main(["ls", "--track", "crit", "--expand"]) == 0
+    args, config = called[0]
+    assert (args.track, args.domain, args.expand) == ("crit", None, True)
+    assert config == {"hosts": {}}
+
+
+def test_inv_remains_workspace_inventory_alias(monkeypatch):
+    called = []
+    monkeypatch.setattr(cli, "load_config", lambda: {"hosts": {}})
+    monkeypatch.setattr(cli, "_detect_session_context", lambda: None)
+    monkeypatch.setattr(cli, "cmd_inv", lambda args, _config: called.append(args))
+
+    assert cli.main(["inv", "--domain", "geno"]) == 0
+    assert called[0].domain == "geno"
+
+
+def test_iterm_commands_stay_under_iterm_namespace(monkeypatch):
+    called = []
+    monkeypatch.setattr(cli, "load_config", lambda: {"hosts": {}})
+    monkeypatch.setattr(cli, "_detect_session_context", lambda: None)
+    monkeypatch.setattr(cli, "cmd_iterm", lambda args, _config: called.append(args))
+
+    assert cli.main(["iterm", "focus", "geno.tt"]) == 0
+    assert (called[0].action, called[0].name) == ("focus", "geno.tt")
+
+
+@pytest.mark.parametrize("command", ["focus", "fork", "tab", "new-task", "name"])
+def test_iterm_shortcuts_require_iterm_namespace(monkeypatch, command):
+    monkeypatch.setattr(cli, "load_config", lambda: {"hosts": {}})
+    monkeypatch.setattr(cli, "_detect_session_context", lambda: None)
+    monkeypatch.setattr(cli, "cmd_iterm", lambda *_: pytest.fail("top-level shortcut survived"))
+
+    with pytest.raises(SystemExit, match=rf"tt iterm {command}"):
+        cli.main([command])
+
+
+def test_workspace_plain_lists_one_row_per_workspace(capsys):
+    rows = [
+        {"track": "crit", "domain": "geno", "workspace": "tt", "born": "2026.q3",
+         "session_count": 1},
+        {"track": "crit", "domain": "geno", "workspace": "tt", "born": "2026.q3",
+         "session_count": 0},
+        {"track": "side", "domain": "misc", "workspace": "dotfiles", "born": "2025.q4",
+         "session_count": 0},
+        {"track": "", "domain": "", "workspace": "legacy", "born": "",
+         "session_count": 0},
+    ]
+
+    _workspaces_plain([("local", "localhost", rows)], track_filter="crit")
+
+    assert capsys.readouterr().out == "local\tcrit\tgeno\ttt.2026.q3\t2\t1\n"
 
 
 def _workspace(tmp_path):
