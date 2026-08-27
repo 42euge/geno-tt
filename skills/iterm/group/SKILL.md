@@ -16,4 +16,4 @@ tt iterm group [--dry-run]
 
 Buckets tabs by the leading dot-segment of their session name (`program.area.aspect` → one window per `program`) and moves them together via the iTerm2 API — no focus change. `--dry-run` prints the grouping without moving anything.
 
-Requires the `iterm2` package (`pipx inject geno-tt iterm2`) and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API.
+Requires the `iterm2` package and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API. If the package is missing, `tt iterm` prints the install command for its active Python.

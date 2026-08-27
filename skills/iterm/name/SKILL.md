@@ -16,4 +16,4 @@ tt iterm name <tty|sel> <program.area.aspect>
 
 Applies a canonical dot-notation name to a session (`sel` = the current session). The name holds while the tab is idle; Claude Code re-titles a live tab from its conversation, so keep the canonical scheme in a doc.
 
-Requires the `iterm2` package (`pipx inject geno-tt iterm2`) and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API.
+Requires the `iterm2` package and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API. If the package is missing, `tt iterm` prints the install command for its active Python.
