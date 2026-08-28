@@ -16,4 +16,4 @@ tt iterm resume [--dry-run] [--min-score N]
 
 For each idle tab, fingerprints its restored scrollback and rarity-matches it against `~/.claude/projects` transcripts, then runs `clauded -r <uuid>` on confident hits. Always preview with `--dry-run` first — it prints the `tty → uuid (score)` mapping without resuming.
 
-Requires the `iterm2` package (`pipx inject geno-tt iterm2`) and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API.
+Requires the `iterm2` package and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API. If the package is missing, `tt iterm` prints the install command for its active Python.

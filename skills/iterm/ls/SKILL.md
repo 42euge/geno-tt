@@ -16,4 +16,4 @@ tt iterm ls
 
 Reads the live iTerm2 window/tab/session tree without stealing focus and prints each session's tty, name, foreground job, and cwd. The authoritative inventory for the other `tt iterm` commands.
 
-Requires the `iterm2` package (`pipx inject geno-tt iterm2`) and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API.
+Requires the `iterm2` package and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API. If the package is missing, `tt iterm` prints the install command for its active Python.

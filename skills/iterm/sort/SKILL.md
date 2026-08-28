@@ -16,4 +16,4 @@ tt iterm sort --by date [--pin NAME] [--window ID]
 
 Orders the current (or `--window`) window's tabs by each session's last human turn, read from `~/.claude/projects` transcripts; `--pin NAME` forces a matching session to the front. Defaults to the window holding the current session.
 
-Requires the `iterm2` package (`pipx inject geno-tt iterm2`) and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API.
+Requires the `iterm2` package and iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API. If the package is missing, `tt iterm` prints the install command for its active Python.

@@ -17,7 +17,7 @@ tt code <id|folder|path> --theme "<installed theme label>" [--tag repo=tag]
 
 Resolve the target through TT before opening it. A local path must be inside a
 canonical `~/code/<track>/<domain>/<workspace>.<born>/` workspace; a name or
-index must appear in `tt repos` or `tt inv`.
+index must appear in `tt repos` or `tt ls`.
 
 If the target is missing or outside TT, do not open it as an arbitrary folder.
 Tell the user that the repo/workspace is not registered in TT and ask whether

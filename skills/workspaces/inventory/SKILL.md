@@ -11,10 +11,10 @@ metadata:
 # tt workspaces/inventory
 
 ```
-tt inv [-t TRACK] [-d DOMAIN] [--expand]
+tt ls [-t TRACK] [-d DOMAIN] [--expand]
 ```
 
-The 'what am I working on' view over `~/code/<track>/<domain>/<workspace>.<born>/`. Filter by track/domain; `--expand` lists repos.
+The 'what am I working on' view over `~/code/<track>/<domain>/<workspace>.<born>/`. Filter by track/domain; `--expand` lists repos. `tt inv` remains as a compatibility alias.
 
 Hosts are never hardcoded — remote targets resolve from the `[hosts]` table
 in `~/.geno/tt/config.toml`. Config + state live under `~/.geno/tt/`.

@@ -11,7 +11,7 @@ metadata:
 # tt sessions/ls
 
 ```
-tt ls [--all]
+tt tmux ls [--all]
 ```
 
 Lists tmux sessions on the default (or `-H <host>`) host. `--all` spans every configured host. Folders get alpha IDs; sessions get numeric IDs used by attach/kill.
