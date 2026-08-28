@@ -2,6 +2,7 @@
 """tt - Remote tmux session manager."""
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -1822,9 +1823,16 @@ def cmd_theme(args, config):
 
 
 def cmd_code(args, config):
-    """Open a local folder directly or a remote folder via SSH."""
+    """Open a registered TT repo or workspace in VS Code."""
+    if getattr(args, "list_themes", False):
+        for theme in sorted(_installed_vscode_themes(), key=str.casefold):
+            print(theme)
+        return
+
     alias, hostname = resolve_host(config)
     target = args.target
+    theme = getattr(args, "theme", None)
+    tags = _parse_code_tags(getattr(args, "tags", None) or [])
 
     if target.startswith("~/"):
         if hostname == LOCAL_HOSTNAME:
@@ -1844,23 +1852,208 @@ def cmd_code(args, config):
     else:
         folder = find_repo(hostname, target, config=config)
         if not folder:
-            raise SystemExit(f"No repo found for '{target}'. Check tt repos.")
+            raise SystemExit(
+                f"Repo or workspace '{target}' is not registered in TT. "
+                "Ask whether to create or migrate it with "
+                "geno-tt-workspaces-create."
+            )
 
     import subprocess
     if hostname == LOCAL_HOSTNAME:
-        if not Path(folder).exists():
-            raise SystemExit(f"Local path does not exist: {folder}")
-        print(f"Opening VS Code: {folder}")
-        command = ["code", "--new-window", folder]
+        local_target = Path(folder).expanduser()
+        if not local_target.exists():
+            raise SystemExit(
+                f"Repo or workspace '{folder}' is not registered in TT. "
+                "Ask whether to create or migrate it with "
+                "geno-tt-workspaces-create."
+            )
+        workspace = _tt_workspace_root(local_target)
+        if workspace is None:
+            raise SystemExit(
+                f"Path '{folder}' is not registered in TT. "
+                "Ask whether to create or migrate it with "
+                "geno-tt-workspaces-create."
+            )
+
+        launch_target = local_target
+        if theme is not None or tags:
+            if theme is None:
+                raise SystemExit("--tag requires --theme so the workspace file can be prepared")
+            launch_target = _prepare_code_workspace(workspace, theme, tags)
+        elif local_target.is_dir() and local_target.resolve() == workspace.resolve():
+            existing = _find_code_workspace(workspace)
+            if existing is not None:
+                launch_target = existing
+
+        folder = str(launch_target)
+        if sys.platform == "darwin":
+            # The `code` shim can report success while merely forwarding its
+            # environment to an existing macOS instance. `open -n` reliably
+            # creates the dedicated window promised by this command.
+            command = [
+                "open", "-na", "Visual Studio Code", "--args",
+                "--new-window", folder,
+            ]
+        else:
+            command = ["code", "--new-window", folder]
     else:
+        if target.startswith(("/", "~/")) and not _WS_RE.match(folder):
+            raise SystemExit(
+                f"Path '{target}' is not registered in TT. "
+                "Ask whether to create or migrate it with "
+                "geno-tt-workspaces-create."
+            )
+        if theme is not None or tags:
+            raise SystemExit("--theme and --tag currently prepare local TT workspaces only")
         uri = f"vscode-remote://ssh-remote+{hostname}{folder}"
-        print(f"Opening VS Code: {hostname}:{folder}")
         command = ["code", "--folder-uri", uri]
-    subprocess.Popen(
-        command,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(f"VS Code launcher not found: {command[0]}") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise SystemExit(f"VS Code launcher failed{suffix}") from exc
+
+    shown = folder if hostname == LOCAL_HOSTNAME else f"{hostname}:{folder}"
+    print(f"Opening VS Code: {shown}")
+
+
+def _tt_workspace_root(path: Path) -> Path | None:
+    """Return the canonical TT workspace containing a local target."""
+    candidate = path.resolve()
+    m = _WS_RE.match(str(candidate))
+    return Path(m.group(1)) if m else None
+
+
+def _workspace_slug(workspace: Path) -> str:
+    match = _BORN_RE.match(workspace.name)
+    return match.group("slug") if match else workspace.name
+
+
+def _find_code_workspace(workspace: Path) -> Path | None:
+    preferred = workspace / f"{_workspace_slug(workspace)}.code-workspace"
+    if preferred.exists():
+        return preferred
+    candidates = sorted(workspace.glob("*.code-workspace"))
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise SystemExit(
+            f"Multiple VS Code workspace files found in {workspace}; "
+            f"create or select {preferred.name}."
+        )
+    return None
+
+
+def _parse_code_tags(values: list[str]) -> dict[str, str]:
+    tags = {}
+    for value in values:
+        if "=" not in value:
+            raise SystemExit("--tag must use repo=tag")
+        repo, tag = value.split("=", 1)
+        repo, tag = repo.strip(), tag.strip().removeprefix("-")
+        if not repo or not re.fullmatch(r"[A-Za-z0-9._-]+", tag):
+            raise SystemExit("--tag must use repo=tag with a filesystem-safe tag")
+        tags[repo] = tag
+    return tags
+
+
+def _installed_vscode_themes(roots: list[Path] | None = None) -> set[str]:
+    """Return exact theme labels contributed by installed VS Code packages."""
+    if roots is None:
+        roots = [Path.home() / ".vscode" / "extensions"]
+        if sys.platform == "darwin":
+            roots.append(Path(
+                "/Applications/Visual Studio Code.app/Contents/Resources/app/extensions"
+            ))
+        elif sys.platform.startswith("linux"):
+            roots.extend([
+                Path("/usr/share/code/resources/app/extensions"),
+                Path("/usr/lib/code/resources/app/extensions"),
+            ])
+
+    labels = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for manifest in root.glob("*/package.json"):
+            try:
+                data = json.loads(manifest.read_text())
+            except (OSError, ValueError):
+                continue
+            translations = {}
+            nls = manifest.with_name("package.nls.json")
+            if nls.exists():
+                try:
+                    translations = json.loads(nls.read_text())
+                except (OSError, ValueError):
+                    pass
+            themes = (data.get("contributes") or {}).get("themes") or []
+            for theme in themes:
+                label = theme.get("label") or theme.get("id")
+                if isinstance(label, str) and re.fullmatch(r"%[^%]+%", label):
+                    label = translations.get(label[1:-1]) or theme.get("id")
+                if isinstance(label, str) and label.strip():
+                    labels.add(label.strip())
+    return labels
+
+
+def _prepare_code_workspace(
+    workspace: Path,
+    theme: str,
+    tags: dict[str, str],
+    installed_themes: set[str] | None = None,
+) -> Path:
+    """Create/update a canonical multi-root file while preserving preferences."""
+    installed = _installed_vscode_themes() if installed_themes is None else installed_themes
+    if theme not in installed:
+        raise SystemExit(
+            f"'{theme}' is not an installed VS Code theme. "
+            "Run 'tt code --list-themes' and choose an exact label."
+        )
+
+    repos = sorted(
+        child for child in workspace.iterdir()
+        if child.is_dir() and not child.name.startswith(".")
+        and (child / ".git").exists()
     )
+    unknown = sorted(set(tags) - {repo.name for repo in repos})
+    if unknown:
+        raise SystemExit(f"--tag names unknown workspace repo(s): {', '.join(unknown)}")
+
+    workspace_file = (
+        _find_code_workspace(workspace)
+        or workspace / f"{_workspace_slug(workspace)}.code-workspace"
+    )
+    data = {}
+    if workspace_file.exists():
+        try:
+            loaded = json.loads(workspace_file.read_text())
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"Cannot read workspace file {workspace_file}: {exc}") from exc
+        if isinstance(loaded, dict):
+            data = loaded
+
+    folders = [{"name": workspace.name, "path": "."}]
+    for repo in repos:
+        name = repo.name
+        if repo.name in tags:
+            name = f"{name}-{tags[repo.name]}"
+        folders.append({"name": name, "path": repo.name})
+    data["folders"] = folders
+    settings = data.setdefault("settings", {})
+    settings["workbench.colorTheme"] = theme
+    workspace_file.write_text(json.dumps(data, indent=2) + "\n")
+    return workspace_file
 
 
 def cmd_report(args, config):
@@ -2038,6 +2231,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
         print("  tt wt fanout <N> <prompt…>")
         print("  tt repos [--all]")
+        print("  tt code <repo|workspace> [--theme THEME] [--tag repo=tag]")
         print("  tt report [--all-hosts]")
         print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
         print("  tt mirror <workspace> <host>")
@@ -2203,9 +2397,18 @@ def main(argv: list[str] | None = None) -> int:
         cmd_new(args, config)
 
     elif cmd == "code":
-        if len(argv) < 2:
-            raise SystemExit("Usage: tt code <id|folder|/path>")
-        cmd_code(argparse.Namespace(target=argv[1]), config)
+        cp = argparse.ArgumentParser(prog="tt code", add_help=False)
+        cp.add_argument("target", nargs="?", default=None)
+        cp.add_argument("--theme", default=None)
+        cp.add_argument("--tag", dest="tags", action="append", default=[])
+        cp.add_argument("--list-themes", action="store_true")
+        cargs = cp.parse_args(argv[1:])
+        if cargs.target is None and not cargs.list_themes:
+            raise SystemExit(
+                "Usage: tt code <id|folder|path> [--theme THEME] "
+                "[--tag repo=tag]"
+            )
+        cmd_code(cargs, config)
 
     elif cmd == "tui":
         from .tui import run_tui
