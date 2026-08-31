@@ -10,8 +10,10 @@ import pytest
 from geno_tt.cli import (
     _parse_rel,
     _current_quarter,
+    _default_vscode_theme,
     _installed_vscode_themes,
     _prepare_code_workspace,
+    _write_claude_local,
     cmd_code,
 )
 
@@ -76,6 +78,58 @@ def test_prepare_code_workspace_rejects_a_theme_that_is_not_installed(tmp_path):
             tags={},
             installed_themes={"Hacker Blue"},
         )
+
+
+def test_default_theme_prefers_dark_modern_then_older_fallbacks():
+    assert _default_vscode_theme({"Dark Modern", "Dark+", "Abyss"}) == "Dark Modern"
+    assert _default_vscode_theme({"Dark+", "Abyss"}) == "Dark+"
+    # Nothing matched: return a name anyway. VS Code ignores an unknown
+    # colorTheme and keeps the user's current one, so this is inert — whereas
+    # refusing to write would leave the workspace unopenable as a workspace.
+    assert _default_vscode_theme({"Abyss"}) == "Dark Modern"
+
+
+def test_prepare_code_workspace_writes_the_claude_local_half(tmp_path):
+    root = _workspace(tmp_path)
+
+    _prepare_code_workspace(
+        root, theme="Dark Modern", tags={}, installed_themes={"Dark Modern"},
+    )
+
+    body = (root / "CLAUDE.local.md").read_text()
+    assert body.startswith("# Workspace: voice.2026.q3\n")
+    assert "<!-- generated-by-tt-overlay -->" in body
+    assert "**explore** track" in body
+    assert "## Repos (2)" in body
+    assert "audio_tools · geno-voice" in body
+
+
+def test_claude_local_keeps_hand_written_local_context(tmp_path):
+    root = _workspace(tmp_path)
+    (root / "CLAUDE.local.md").write_text(
+        "# Workspace: stale name\n\n## Repos (99)\n\nwrong\n\n"
+        "## Local context\n\nMine. Keep this.\n"
+    )
+
+    _write_claude_local(root, sorted(root / name for name in ("geno-voice",)))
+
+    body = (root / "CLAUDE.local.md").read_text()
+    assert "## Local context\n\nMine. Keep this." in body   # preserved
+    assert "## Repos (1)" in body                            # header refreshed
+    assert "stale name" not in body
+    assert "wrong" not in body
+
+
+def test_claude_local_omits_the_track_line_outside_the_scheme(tmp_path):
+    root = tmp_path / "loose-workspace"
+    (root / "repo" / ".git").mkdir(parents=True)
+
+    _write_claude_local(root, [root / "repo"])
+
+    body = (root / "CLAUDE.local.md").read_text()
+    # The scheme path itself contains the word "track", so assert on the claim.
+    assert "Workspace under the" not in body
+    assert "## Repos (1)" in body
 
 
 def test_installed_themes_resolves_builtin_localization_labels(tmp_path):
