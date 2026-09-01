@@ -124,6 +124,11 @@ tt new-project side.demo.hello
 The shell layer changes into the new directory on a local host. Without the
 shell layer, `tt` still creates it and prints the path.
 
+Creation also writes the initial `<workspace>.code-workspace` and `AGENTS.md`,
+then creates `CLAUDE.md` as a relative symlink to `AGENTS.md`. The seeded
+repository directory is included even before it has been cloned or initialized
+as Git.
+
 ## 5. Inventory and open it
 
 ```bash
@@ -136,12 +141,21 @@ Opening a local workspace generates or refreshes two overlay files before VS
 Code starts:
 
 - `<workspace>.code-workspace`, containing the workspace root and its Git repos;
-- `CLAUDE.local.md`, containing generated workspace context while preserving
-  everything under a hand-written `## Local context` heading.
+- `AGENTS.md`, containing generated workspace context while preserving
+  everything under a hand-written `## Local context` heading; and
+- `CLAUDE.md -> AGENTS.md`, so Claude reads the same agent-neutral instructions.
 
 `tt code` always opens a new window. Use `tt code --list-open` to refresh the
 shared `~/.geno/workspace.json` registry and print all live VS Code windows, or
 `tt code --sync` to refresh it and print only the count.
+
+To audit all discovered workspaces without opening them, run:
+
+```bash
+tt workspaces check
+tt workspaces check --fix
+tt workspaces check --registered --fix  # live local iTerm/VS Code workspaces
+```
 
 ## 6. Create a whole-workspace worktree
 

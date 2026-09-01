@@ -23,5 +23,13 @@ tt = "geno_tt.cli:main"
 [tool.setuptools.packages.find]
 include = ["geno_tt*"]
 
+[tool.setuptools.package-data]
+geno_tt = [
+  "workspace-schema.yaml",
+  "hooks/*.json",
+  "scripts/*.sh",
+  "shell/*.sh",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

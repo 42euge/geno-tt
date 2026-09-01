@@ -139,6 +139,25 @@ Clone every repository remote from a source workspace into the same relative
 workspace path on another host. The source is the current workspace when
 possible, otherwise it is resolved on the default or `-H` host.
 
+Creating, ecosystem-cloning, and mirroring a workspace all reconcile the same
+workspace overlay described below, locally or over SSH.
+
+```text
+tt workspaces check [--fix] [--registered]
+```
+
+Check every canonical workspace discovered on the selected host. The command
+exits nonzero when repairable drift or an unsafe-to-overwrite file is found.
+`--fix` creates missing overlays and refreshes repository paths, display names,
+themes, and generated agent context. Existing valid themes, display-only
+`-<tag>` suffixes, unrelated settings, extensions, and hand-written
+`## Local context` content are preserved.
+
+`--registered` scopes the check to canonical local workspaces referenced by
+the shared iTerm/VS Code surface registry. It first refreshes live VS Code
+windows. Invalid JSON and ambiguous multiple workspace files are reported but
+never overwritten automatically.
+
 ## VS Code and workspace overlays
 
 ```text
@@ -152,24 +171,31 @@ Repository names and indices resolve through repository discovery. Opening an
 entire workspace currently requires its canonical path. `tt code` rejects paths
 outside the canonical layout and always opens a new VS Code window.
 
-For a local workspace target, it creates or refreshes:
+For a canonical workspace target, locally or over SSH, it creates or refreshes:
 
 - `<workspace>.code-workspace`, with the workspace root followed by each
   top-level Git repository; and
-- `CLAUDE.local.md`, whose generated section records the workspace and repo
-  list while preserving a hand-written `## Local context` section.
+- `AGENTS.md`, whose generated section records the workspace and repo list
+  while preserving a hand-written `## Local context` section; and
+- `CLAUDE.md -> AGENTS.md`, a relative symlink giving Claude the same context.
+
+Repair migrates a TT-generated `CLAUDE.local.md` into `AGENTS.md` and removes
+the legacy file only after the new file and symlink succeed. Unmanaged
+`AGENTS.md`, `CLAUDE.md`, and `CLAUDE.local.md` files are reported without
+overwrite.
 
 `--theme` must exactly match a label from `--list-themes`. Repeat `--tag` to add
 a display-only suffix to repository names in the VS Code workspace, for example
-`--tag api=staging`. Theme and tag overlay changes are currently local only.
+`--tag api=staging`. Later reconciliations preserve those suffixes and the
+existing valid theme when the options are omitted.
 
 `--list-open` and `--sync` open nothing. Both discover all live VS Code windows
 and replace only the registry's `vscode` attachments in
 `~/.geno/workspace.json`; `--list-open` prints their nodes and locations, while
 `--sync` prints only the registered count.
 
-There is no separate `tt overlay` command: opening a local workspace with
-`tt code` is the overlay generation operation.
+There is no separate `tt overlay` command: `tt code` reconciles while opening,
+and `tt workspaces check --fix` reconciles existing workspaces without opening.
 
 ## Whole-workspace worktrees
 

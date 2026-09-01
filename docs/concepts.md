@@ -38,6 +38,15 @@ Commands such as `tt repos`, `tt new`, and a repository-name form of `tt code`
 can target one repo. Commands such as `tt wt`, `tt mirror`, and `tt spawn`
 operate on the workspace as a unit.
 
+Every workspace-management path shares one overlay schema. The workspace root
+is the first VS Code folder, each top-level repository keeps its directory name
+with an optional `-<tag>` display suffix, and the chosen installed theme is
+preserved. Creating, cloning, mirroring, or opening a workspace reconciles that
+schema; `tt workspaces check` exposes the same reconciliation without opening
+an editor. The schema is loaded from `~/.geno/tt/workspace-schema.yaml`, with a
+packaged fallback, so layout and overlay rules change in one place without
+teaching each caller new rules.
+
 ## Whole-workspace worktrees
 
 Normal `git worktree` operates on one repository. `tt wt` repeats the operation
@@ -105,6 +114,10 @@ geno.docs
 
 `tt iterm reg pull` discovers named iTerm tabs, and `tt code --sync` discovers
 live VS Code windows. Both preserve attachment types owned by other tools.
+
+`tt workspaces check --registered` refreshes the live VS Code attachments and
+checks every canonical local workspace referenced by either an iTerm or VS Code
+attachment. Add `--fix` to repair their overlay files in place.
 
 ## The binary and the shell layer
 

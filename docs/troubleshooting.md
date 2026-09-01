@@ -169,6 +169,21 @@ tt code --sync
 
 The registry is `~/.geno/workspace.json`.
 
+## Workspace files or repository labels have drifted
+
+Check every discovered workspace, or only workspaces attached to registered
+local iTerm and VS Code surfaces:
+
+```bash
+tt workspaces check
+tt workspaces check --registered
+```
+
+Add `--fix` to reconcile them. Existing valid themes and `{repo}-<tag>` labels
+are retained. Invalid JSON and ambiguous multiple workspace files are left
+untouched and reported for manual resolution. Remote checks use the selected
+`-H` host and require `python3` there.
+
 ## `tt wt` cannot resolve the current workspace
 
 Run it from inside a canonical workspace with a born stamp, or name the

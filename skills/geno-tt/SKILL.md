@@ -66,6 +66,19 @@ the new repo ID with `tt -H <host> repos --all` when needed.
 Retirement moves the workspace to
 `~/code/graveyard/<track>/<domain>/<workspace>.<born>` and refuses to overwrite
 an existing entry. Never infer confirmation, and report the destination printed
-by TT. Do not run other destructive or administrative TT actions from this
-entry point. Hosts come from `~/.geno/tt/config.toml`; never hard-code them.
-User-facing CLI details remain in `docs/`.
+by TT.
+
+Creating or opening a canonical workspace reconciles its configured workspace
+schema. When the user explicitly asks to audit or repair workspace files, run
+`tt -H <host> workspaces check [--fix]`. Use `--registered` only for local
+iTerm or VS Code workspaces.
+
+Workspace rules come from `~/.geno/tt/workspace-schema.yaml` with packaged
+defaults. Invalid schema input or unsafe existing files must stop before writes.
+The default schema generates workspace-root `AGENTS.md` and a relative
+`CLAUDE.md -> AGENTS.md` symlink. Migrate only TT-managed legacy context;
+report unmanaged instruction files or conflicting links without replacing them.
+
+Do not run other destructive or administrative TT actions from this entry point.
+Hosts come from `~/.geno/tt/config.toml`; never hard-code them. User-facing CLI
+details remain in `docs/`.

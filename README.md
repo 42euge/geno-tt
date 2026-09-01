@@ -103,6 +103,7 @@ tt inv [-t TRACK] [-d DOMAIN] [--expand]
 tt repos [--all | -g GROUP | -s TERM | -i]
 tt new-project <track>.<domain>.<workspace>[.<repo>]
 tt retire [<workspace>] --yes
+tt workspaces check [--fix] [--registered]
 tt code <repo|index|canonical-path> [--theme THEME] [--tag repo=tag]
 tt code --list-open
 tt code --sync
@@ -135,7 +136,7 @@ Global flags such as `-H`, `--tab`, and `--cc` go before the command. See the
 - [Getting started](docs/getting-started.md) — requirements, setup, and a first workflow
 - [Core concepts](docs/concepts.md) — workspaces, worktrees, hosts, sessions, and the shell layer
 - [Command reference](docs/command-reference.md) — the complete CLI grouped by job
-- [Configuration](docs/configuration.md) — `config.toml`, discovery globs, iTerm2, and state files
+- [Configuration](docs/configuration.md) — hosts, discovery globs, editable workspace-schema YAML, iTerm2, and state files
 - [Troubleshooting](docs/troubleshooting.md) — common setup and runtime failures
 - [AGENTS.md](AGENTS.md) — architecture and contributor conventions
 
