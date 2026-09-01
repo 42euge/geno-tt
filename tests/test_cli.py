@@ -15,6 +15,7 @@ from geno_tt.cli import (
     _prepare_code_workspace,
     _write_claude_local,
     cmd_code,
+    main,
 )
 
 
@@ -168,6 +169,9 @@ def test_code_opens_a_local_workspace_file_with_the_macos_launcher(
         lambda argv, **kwargs: calls.append((argv, kwargs)),
     )
     monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(
+        "geno_tt.cli._sync_vscode_registry", lambda launched_uri=None: 6,
+    )
     config = {
         "default_host": "local",
         "hosts": {"local": "localhost"},
@@ -181,7 +185,9 @@ def test_code_opens_a_local_workspace_file_with_the_macos_launcher(
     ]
     assert "vscode-remote" not in " ".join(calls[0][0])
     assert calls[0][1]["check"] is True
-    assert capsys.readouterr().out == f"Opening VS Code: {workspace_file}\n"
+    output = capsys.readouterr().out
+    assert f"Opening VS Code: {workspace_file}\n" in output
+    assert "Registered 6 open VS Code windows" in output
 
 
 def test_code_keeps_remote_ssh_for_a_remote_host(monkeypatch, capsys):
@@ -190,6 +196,9 @@ def test_code_keeps_remote_ssh_for_a_remote_host(monkeypatch, capsys):
         subprocess,
         "run",
         lambda argv, **kwargs: calls.append((argv, kwargs)),
+    )
+    monkeypatch.setattr(
+        "geno_tt.cli._sync_vscode_registry", lambda launched_uri=None: 4,
     )
     config = {
         "default_host": "build",
@@ -201,9 +210,36 @@ def test_code_keeps_remote_ssh_for_a_remote_host(monkeypatch, capsys):
 
     assert calls[0][0] == [
         "code",
+        "--new-window",
         "--folder-uri",
         f"vscode-remote://ssh-remote+build.example.com{target}",
     ]
-    assert capsys.readouterr().out == (
-        f"Opening VS Code: build.example.com:{target}\n"
+    output = capsys.readouterr().out
+    assert f"Opening VS Code: build.example.com:{target}\n" in output
+    assert "Registered 4 open VS Code windows" in output
+
+
+def test_code_list_open_refreshes_and_shows_live_registry(monkeypatch, capsys):
+    sessions = [
+        {
+            "_node": "geno.geno-tt",
+            "window_id": "15",
+            "path": "/Users/dev/code/chore/geno/geno-tt.2026.q3/geno-tt.code-workspace",
+        },
+        {
+            "_node": "geno.geno-dev",
+            "window_id": "23",
+            "path": "/Users/dev/code/explore/geno/geno-dev.2026.q3/geno-dev.code-workspace",
+        },
+    ]
+    monkeypatch.setattr(
+        "geno_tt.cli._refresh_vscode_registry", lambda: sessions, raising=False,
     )
+
+    assert main(["code", "--list-open"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Open VS Code workspaces (2 windows)" in output
+    assert "geno.geno-tt" in output
+    assert "geno.geno-dev" in output
+    assert "[23]" in output

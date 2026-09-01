@@ -1143,6 +1143,8 @@ def cmd_iterm(args, config):
                     surf.append(f"iterm:{node['iterm'].get('tty','?')}")
                 if "chrome" in node:
                     surf.append(f"chrome:{len(node['chrome'].get('urls', []))}t/{node['chrome'].get('color','')}")
+                if "vscode" in node:
+                    surf.append(f"vscode:{len(node['vscode'].get('windows', []))}w")
                 print(f"  {_BOLD}{path}{_RESET}  {_DIM}[{' · '.join(surf) or 'no surfaces'}]{_RESET}")
 
     elif action == "focus":
@@ -1822,11 +1824,71 @@ def cmd_theme(args, config):
         cmd_theme_show(action)
 
 
+def _sync_vscode_registry(launched_uri: str | None = None) -> int:
+    """Synchronize live VS Code windows, retaining a just-launched target on races."""
+    from .vscode import (
+        VSCodeDiscoveryError,
+        register_sessions,
+        session_for_uri,
+        sync_open_sessions,
+    )
+
+    extra = session_for_uri(launched_uri) if launched_uri else None
+    try:
+        return sync_open_sessions(extra)
+    except VSCodeDiscoveryError:
+        # Opening is already complete. Preserve prior attachments and at least
+        # record the new target instead of replacing the registry partially.
+        if extra:
+            register_sessions([extra], replace=False)
+        raise
+
+
+def _refresh_vscode_registry() -> list[dict]:
+    from .vscode import refresh_open_sessions
+    return refresh_open_sessions()
+
+
+def _print_vscode_sync(count: int) -> None:
+    from .registry import PATH
+    noun = "window" if count == 1 else "windows"
+    print(f"Registered {count} open VS Code {noun} → {PATH}")
+
+
+def _print_open_vscode(sessions: list[dict]) -> None:
+    noun = "window" if len(sessions) == 1 else "windows"
+    print(f"Open VS Code workspaces ({len(sessions)} {noun})")
+    for session in sorted(
+        sessions, key=lambda item: (item.get("_node", ""), item.get("window_id", "")),
+    ):
+        node = session.get("_node", "vscode.window")
+        window_id = session.get("window_id", "?")
+        location = session.get("path") or session.get("title", "")
+        remote = f" ({session['remote']})" if session.get("remote") else ""
+        print(f"  {node:<30} [{window_id}] {location}{remote}")
+
+
 def cmd_code(args, config):
     """Open a registered TT repo or workspace in VS Code."""
     if getattr(args, "list_themes", False):
         for theme in sorted(_installed_vscode_themes(), key=str.casefold):
             print(theme)
+        return
+    if getattr(args, "sync", False):
+        from .vscode import VSCodeDiscoveryError
+        try:
+            count = _sync_vscode_registry()
+        except VSCodeDiscoveryError as exc:
+            raise SystemExit(f"VS Code registry sync failed: {exc}") from exc
+        _print_vscode_sync(count)
+        return
+    if getattr(args, "list_open", False):
+        from .vscode import VSCodeDiscoveryError
+        try:
+            sessions = _refresh_vscode_registry()
+        except VSCodeDiscoveryError as exc:
+            raise SystemExit(f"VS Code registry refresh failed: {exc}") from exc
+        _print_open_vscode(sessions)
         return
 
     alias, hostname = resolve_host(config)
@@ -1890,6 +1952,7 @@ def cmd_code(args, config):
             )
 
         folder = str(launch_target)
+        launched_uri = launch_target.resolve().as_uri()
         if sys.platform == "darwin":
             # The `code` shim can report success while merely forwarding its
             # environment to an existing macOS instance. `open -n` reliably
@@ -1910,7 +1973,8 @@ def cmd_code(args, config):
         if theme is not None or tags:
             raise SystemExit("--theme and --tag currently prepare local TT workspaces only")
         uri = f"vscode-remote://ssh-remote+{hostname}{folder}"
-        command = ["code", "--folder-uri", uri]
+        launched_uri = uri
+        command = ["code", "--new-window", "--folder-uri", uri]
 
     try:
         subprocess.run(
@@ -1929,6 +1993,16 @@ def cmd_code(args, config):
 
     shown = folder if hostname == LOCAL_HOSTNAME else f"{hostname}:{folder}"
     print(f"Opening VS Code: {shown}")
+    from .vscode import VSCodeDiscoveryError
+    try:
+        count = _sync_vscode_registry(launched_uri)
+    except VSCodeDiscoveryError as exc:
+        print(
+            f"Warning: VS Code opened, but live-window registry sync failed: {exc}",
+            file=sys.stderr,
+        )
+    else:
+        _print_vscode_sync(count)
 
 
 def _tt_workspace_root(path: Path) -> Path | None:
@@ -2037,7 +2111,7 @@ def _default_vscode_theme(installed_themes: set[str] | None = None) -> str:
 def _write_claude_local(workspace: Path, repos: list[Path]) -> Path:
     """Write the agent-context half of the overlay, preserving hand-edits.
 
-    `GENO.md` and the workspaces/overlay skill both describe the overlay as a
+    `AGENTS.md` and the workspaces/overlay skill both describe the overlay as a
     pair: a `.code-workspace` and a `CLAUDE.local.md`. Only the former was ever
     generated.
 
@@ -2320,6 +2394,8 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt wt fanout <N> <prompt…>")
         print("  tt repos [--all]")
         print("  tt code <repo|workspace> [--theme THEME] [--tag repo=tag]")
+        print("  tt code --sync        Register all open VS Code windows")
+        print("  tt code --list-open   Refresh and show open VS Code workspaces")
         print("  tt report [--all-hosts]")
         print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
         print("  tt mirror <workspace> <host>")
@@ -2490,11 +2566,15 @@ def main(argv: list[str] | None = None) -> int:
         cp.add_argument("--theme", default=None)
         cp.add_argument("--tag", dest="tags", action="append", default=[])
         cp.add_argument("--list-themes", action="store_true")
+        cp.add_argument("--sync", action="store_true")
+        cp.add_argument("--list-open", action="store_true")
         cargs = cp.parse_args(argv[1:])
-        if cargs.target is None and not cargs.list_themes:
+        if cargs.target is None and not (
+            cargs.list_themes or cargs.sync or cargs.list_open
+        ):
             raise SystemExit(
                 "Usage: tt code <id|folder|path> [--theme THEME] "
-                "[--tag repo=tag]"
+                "[--tag repo=tag] | tt code --list-open | tt code --sync"
             )
         cmd_code(cargs, config)
 
