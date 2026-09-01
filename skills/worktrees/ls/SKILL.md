@@ -1,7 +1,7 @@
 ---
 name: geno-tt-worktrees-ls
 description: >-
-  List a workspace's whole-workspace worktrees with age.
+  Use when listing a workspace's whole-workspace worktrees and their ages.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
@@ -11,7 +11,8 @@ metadata:
 # tt worktrees/ls
 
 ```
-tt wt ls [-w WORKSPACE] [-H <host>]
+tt wt ls
+tt -H <host> wt -w WORKSPACE ls
 ```
 
 Shows the worktrees under `.wt/` for the current (or named) workspace.

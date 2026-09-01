@@ -1,7 +1,7 @@
 ---
 name: geno-tt-hosts-list
 description: >-
-  List configured remote hosts and which is the default.
+  Use when listing configured hosts or identifying which host is the default.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

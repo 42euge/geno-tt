@@ -1,7 +1,8 @@
 ---
 name: geno-tt-worktrees-new
 description: >-
-  Create a whole-workspace git worktree (one per repo) and cd into it.
+  Use when creating a named Git worktree in every repository of a workspace and
+  changing into their shared root.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
@@ -11,7 +12,8 @@ metadata:
 # tt worktrees/new
 
 ```
-tt wt new <name> [-w WORKSPACE] [-H <host>]
+tt wt new <name>
+tt -H <host> wt -w WORKSPACE new <name>
 ```
 
 Runs `git worktree add` for every repo in the workspace on branch `wt/<name>`, into a hidden `.wt/<name>/`. Inside a workspace it uses cwd; remote needs `-w` + `-H`.

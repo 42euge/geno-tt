@@ -1,8 +1,8 @@
 ---
 name: geno-tt-iterm-fork
 description: >-
-  Split a pane and open the split as a Claude session — resume an existing
-  session's context beside you, or start a brand-new one.
+  Use when splitting an iTerm2 pane to resume an existing Claude session beside
+  it or start a brand-new sibling session.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
@@ -12,12 +12,14 @@ metadata:
 # tt iterm/fork
 
 ```
-tt iterm fork [session-uuid]                # resume that session's context in a new side pane
-tt iterm fork --node <path> [--new]         # target a registry node's tab instead of the current one
+tt iterm fork <session-uuid>                # resume it beside the current pane
+tt iterm fork <session-uuid> --node <path>  # resume it beside a registry node
+tt fork --new                               # fresh session beside the current pane
+tt fork --node <path> --new                 # fresh session beside a registry node
 ```
 
 Splits an iTerm2 pane and opens the new side pane as Claude:
-- **Default** — `clauded -r <uuid>`: a second Claude carrying that session's context. Defaults to the current pane's own session; the fork diverges from that point (separate context going forward).
+- **With `<session-uuid>`** — `clauded -r <uuid>`: a second Claude carrying that session's context. The fork diverges from that point (separate context going forward).
 - **`--new`** — `clauded` with no `-r`: a brand-new Claude session, not resuming anything. Use this to fork a *pane* (get a sibling working session beside an existing one) without carrying over its transcript.
 - **`--node <path>`** — resolve a dot-notation registry node (e.g. `bluebeam.rf`) to its live tab and fork that pane instead of the one you're typing in. Combine with `--new` to open a fresh Claude beside any node from the workspace GUI or CLI, not just your own pane.
 

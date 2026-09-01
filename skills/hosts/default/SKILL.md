@@ -1,7 +1,7 @@
 ---
 name: geno-tt-hosts-default
 description: >-
-  Show or set the default remote host.
+  Use when showing or changing the default host used by host-aware tt commands.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

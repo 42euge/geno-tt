@@ -1,7 +1,8 @@
 ---
 name: geno-tt-appearance-theme
 description: >-
-  Manage iTerm2 color-scheme themes (list/create/apply/show/delete).
+  Use when listing, creating, applying, inspecting, or deleting saved iTerm2
+  color-scheme themes.
 allowed-tools: "Bash(tt *) Bash(python3 -m geno_tt *)"
 metadata:
   author: 42euge

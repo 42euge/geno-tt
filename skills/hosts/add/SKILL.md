@@ -1,7 +1,8 @@
 ---
 name: geno-tt-hosts-add
 description: >-
-  Add a remote host to the config and set up key-based SSH access.
+  Use when adding a remote host to geno-tt configuration and optionally setting
+  up key-based SSH access.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
@@ -11,7 +12,7 @@ metadata:
 # tt hosts/add
 
 ```
-tt add-host <alias> <hostname> [-u USER] [--default]
+tt add-host <alias> <hostname> [-u USER] [--default] [--no-ssh]
 ```
 
 Generates/copies an SSH key (one password prompt) and writes the alias into `~/.geno/tt/config.toml`.

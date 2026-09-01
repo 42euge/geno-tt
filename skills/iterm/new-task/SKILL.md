@@ -1,7 +1,8 @@
 ---
 name: geno-tt-iterm-new-task
 description: >-
-  Start a new task with no Jira: open a window with a Claude orchestrator that grows dot-named tabs.
+  Use when starting an ad hoc task in a new iTerm2 window with a Claude
+  orchestrator that can grow dot-named tabs.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

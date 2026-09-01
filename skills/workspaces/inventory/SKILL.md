@@ -1,7 +1,8 @@
 ---
 name: geno-tt-workspaces-inventory
 description: >-
-  Show the workspace inventory tree: track / domain / workspace.born with repo + worktree counts and age.
+  Use when viewing or filtering the workspace inventory tree with repository,
+  worktree, and age details.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

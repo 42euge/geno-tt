@@ -1,8 +1,8 @@
-"""Shared object-notation registry — geno-tt's side (writes the 'iterm' key).
+"""Shared object-notation registry — geno-tt owns 'iterm' and 'vscode'.
 
 Same file/contract as geno-surf: ~/.geno/workspace.json, nodes keyed by object
-path. geno-tt owns each node's `iterm` attachment; geno-surf owns `chrome`.
-Neither clobbers the other.
+path. geno-tt owns each node's `iterm` and `vscode` attachments; geno-surf owns
+`chrome`. Neither clobbers the other.
 """
 
 import json

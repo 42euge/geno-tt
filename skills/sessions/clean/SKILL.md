@@ -1,7 +1,8 @@
 ---
 name: geno-tt-sessions-clean
 description: >-
-  Kill duplicate tmux sessions, keeping the first per folder.
+  Use when removing duplicate tmux sessions while keeping the first session in
+  each folder.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

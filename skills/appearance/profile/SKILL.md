@@ -1,7 +1,8 @@
 ---
 name: geno-tt-appearance-profile
 description: >-
-  Export or apply the iTerm2 profile (font, colors, window) for cross-machine parity.
+  Use when exporting or applying the iTerm2 profile so font, color, and window
+  settings stay consistent across machines.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

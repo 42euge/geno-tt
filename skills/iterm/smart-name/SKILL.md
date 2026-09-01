@@ -1,9 +1,8 @@
 ---
 name: geno-tt-iterm-smart-name
 description: >-
-  Intelligently rename all unnamed iTerm2 tabs using dot-notation by reasoning
-  about each tab's cwd, running job, and scrollback context. Presents suggestions
-  for confirmation before applying.
+  Use when unnamed iTerm2 tabs need suggested dot-notation names inferred from
+  each tab's working directory, running job, and scrollback context.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
@@ -13,14 +12,14 @@ metadata:
 # tt iterm / smart-name
 
 Renames all unnamed iTerm2 tabs (tabs without a dot-notation title) by reasoning
-about their context. Unlike `tt name -i` which just prompts for manual input, this
+about their context. Unlike `tt name` which just prompts for manual input, this
 skill **proposes names** based on what each tab is actually doing.
 
 ## How to invoke
 
 ```
 tt ls                   # 1. see which tabs are unnamed (yellow ⚠)
-tt name -i              # 2. walk unnamed tabs — you type names
+tt name                 # 2. walk unnamed tabs — you type names
 ```
 
 ## Agentic naming procedure

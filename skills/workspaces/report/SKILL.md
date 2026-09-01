@@ -1,7 +1,8 @@
 ---
 name: geno-tt-workspaces-report
 description: >-
-  Cross-host inventory dashboard: walk every configured host and render the full track/domain/workspace tree with counts and recency.
+  Use when rendering a cross-host workspace inventory with repository,
+  worktree, session, and recency details.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
