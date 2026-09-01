@@ -2,7 +2,8 @@
 
 `geno-tt` provides the `tt` CLI for code-org workspaces, repository Git
 worktrees, local iTerm2 orchestration, VS Code windows, and tmux sessions on
-configured hosts.
+configured hosts. It can also dispatch a workspace's committed and dirty state
+to a remote tmux agent and recall the result.
 
 User-facing behavior is documented in [README.md](README.md) and [docs/](docs/).
 The umbrella agent workflow is [skills/geno-tt/SKILL.md](skills/geno-tt/SKILL.md).
@@ -23,7 +24,10 @@ at coding-agent session start.
 Important modules:
 
 - `geno_tt/cli.py` — command dispatch and high-level workflows
+- `geno_tt/dispatch.py` — portable Git-state capsules and dispatch/recall state
 - `geno_tt/remote.py` and `geno_tt/tree.py` — SSH/tmux and inventory logic
+- `geno_tt/workspace_registry.py` and `geno_tt/workspace_overlay.py` —
+  host-owned workspace state and canonical workspace files
 - `geno_tt/iterm_api.py` and `geno_tt/iterm2.py` — iTerm2 orchestration and
   attach integration
 - `geno_tt/vscode.py` and `geno_tt/registry.py` — live VS Code discovery and
@@ -61,8 +65,10 @@ The packaged workspace schema defaults to:
   `--discard --yes` is explicit, and appends history below `<workspace>/.tt/`.
 - Hosts come from `~/.geno/tt/config.toml`; never hard-code environment host
   aliases in source or tests. The explicit local transport is `localhost`.
-- `tt ls` means local iTerm2 inventory. Remote session inventory is
-  `tt tmux ls`.
+- `tt ls` means workspace inventory. Local iTerm2 inventory is `tt iterm ls`;
+  remote session inventory is `tt tmux ls`.
+- Dispatches preserve the originating workspace view, resolve hosts only from
+  config, and retain safety stashes when recall cannot apply cleanly.
 - `geno-tt` owns only `iterm` and `vscode` attachments in
   `~/.geno/workspace.json`; preserve attachments owned by other tools.
 

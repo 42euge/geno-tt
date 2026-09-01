@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 
 from . import worktrees
 from .config import load_config, resolve_host, SESSIONS_DIR
+from .dispatch import list_dispatches, recall_dispatch, start_dispatch
 from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_paths, list_workspace_repos, discover_owner_repos, clone_repos, workspace_repo_remotes, move_workspace, spawn_layout, LOCAL_HOSTNAME
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
@@ -2735,6 +2736,54 @@ def _parse_inventory_args(prog: str, argv: list[str]):
     return parser.parse_args(argv)
 
 
+def _dispatch_context(args) -> str:
+    if args.prompt is not None:
+        return args.prompt
+    if args.context_file is not None:
+        if args.context_file == "-":
+            return sys.stdin.read()
+        path = Path(args.context_file).expanduser()
+        try:
+            return path.read_text()
+        except OSError as exc:
+            raise SystemExit(f"Cannot read dispatch context {path}: {exc}") from exc
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    raise SystemExit(
+        "Dispatch needs a handoff: use --prompt TEXT, --context-file FILE, "
+        "or pipe Markdown on stdin."
+    )
+
+
+def cmd_dispatch(args, config):
+    """Move the current workspace view and a context handoff to another host."""
+    manifest = start_dispatch(
+        config=config,
+        host_alias=args.host,
+        context=_dispatch_context(args),
+        name=args.name,
+        workspace=args.workspace,
+        agent=args.agent,
+    )
+    alias = manifest["target"]["host_alias"]
+    print(f"Dispatched '{manifest['name']}' to {alias}.")
+    print(f"  session: {manifest['session']}")
+    print(f"  attach:  tt -H {alias} tmux {manifest['session']}")
+    print(f"  recall:  tt recall {manifest['name']} --stop")
+
+
+def cmd_recall(args, config):
+    """Recall a completed dispatch into its unchanged originating worktree."""
+    manifest = recall_dispatch(config=config, name=args.name, stop=args.stop)
+    print(f"Recalled '{manifest['name']}' into {manifest['source']['workspace_view']}.")
+    if manifest.get("backup_stashes"):
+        names = ", ".join(manifest["backup_stashes"])
+        print(f"  safety stash retained in: {names}")
+    return_file = manifest.get("return_file")
+    if return_file:
+        print(f"  context: {return_file}")
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     config = load_config()
@@ -2813,6 +2862,9 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt report [--all-hosts]")
         print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
         print("  tt mirror <workspace> <host>")
+        print("  tt dispatch <host> --context-file FILE [--name NAME]")
+        print("  tt dispatch list [--json]  Show local dispatch records")
+        print("  tt recall <name> [--stop]")
         print("")
         print("iTerm (local):")
         print("  tt iterm ls|group|sort|name|window|resume|reg|focus|fork|new-task|tab")
@@ -2918,6 +2970,37 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--agents", type=int, default=1)
         sp.add_argument("--shells", type=int, default=1)
         cmd_spawn(sp.parse_args(argv[1:]), config)
+
+    elif cmd == "dispatch":
+        if len(argv) > 1 and argv[1] == "list":
+            records = list_dispatches()
+            unknown = [arg for arg in argv[2:] if arg != "--json"]
+            if unknown:
+                raise SystemExit(f"Unknown dispatch list option: {unknown[0]}")
+            if "--json" in argv[2:]:
+                print(json.dumps(records, indent=2, sort_keys=True))
+                return 0
+            if not records:
+                print("No dispatches.")
+            for record in records:
+                alias = record.get("target", {}).get("host_alias", "?")
+                print(f"{record.get('name', '?')}\t{record.get('status', '?')}\t{alias}")
+            return 0
+        dp = argparse.ArgumentParser(prog="tt dispatch")
+        dp.add_argument("host")
+        dp.add_argument("--name", default=None)
+        dp.add_argument("-w", "--workspace", default=None)
+        context_group = dp.add_mutually_exclusive_group()
+        context_group.add_argument("--context-file", default=None)
+        context_group.add_argument("--prompt", default=None)
+        dp.add_argument("--agent", default="claude")
+        cmd_dispatch(dp.parse_args(argv[1:]), config)
+
+    elif cmd == "recall":
+        rp = argparse.ArgumentParser(prog="tt recall")
+        rp.add_argument("name")
+        rp.add_argument("--stop", action="store_true")
+        cmd_recall(rp.parse_args(argv[1:]), config)
 
     elif cmd == "new-project":
         if len(argv) < 2:

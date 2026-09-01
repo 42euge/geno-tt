@@ -452,6 +452,38 @@ def list_repos(hostname: str, config: dict | None = None, write_cache: bool = Tr
         raise RuntimeError(str(exc)) from exc
 
 
+def _list_local_repos(
+    repo_dirs: list[str],
+    hostname: str,
+    write_cache: bool,
+) -> list[dict]:
+    """List local repos for compatibility with schema and retirement checks."""
+    import glob as _glob
+    from datetime import datetime, timezone
+
+    repos = []
+    seen: set[str] = set()
+    for pattern in repo_dirs:
+        for path in sorted(_glob.glob(os.path.expanduser(pattern))):
+            path = path.rstrip("/")
+            if path in seen or _is_graveyard_path(path):
+                continue
+            seen.add(path)
+            try:
+                timestamp = datetime.fromtimestamp(
+                    os.stat(path).st_atime,
+                    tz=timezone.utc,
+                ).isoformat()
+            except OSError:
+                timestamp = "unknown"
+            repos.append({"path": path, "last_accessed": timestamp})
+
+    repos.sort(key=lambda repo: repo["path"])
+    if write_cache:
+        write_json(_repos_cache_path(hostname), repos)
+    return repos
+
+
 def _is_graveyard_path(path: str) -> bool:
     """Return whether a path lives below the reserved ~/code/graveyard tree."""
     normalized = path.rstrip("/") + "/"

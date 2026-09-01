@@ -14,6 +14,8 @@ Its main jobs are:
 - inventory, create, and retire workspaces in the code-org layout;
 - create, find, enter, and safely retire repository Git worktrees;
 - open a workspace as one VS Code window and register live editor windows;
+- dispatch committed and dirty workspace state to a remote tmux agent and
+  safely recall it;
 - organize iTerm2 tabs using dot-notation names; and
 - create, find, attach to, and clean up tmux sessions across configured hosts.
 
@@ -108,6 +110,9 @@ tt workspaces check [--fix] [--registered]
 tt code <repo|index|canonical-path> [--theme THEME] [--tag repo=tag]
 tt code --list-open
 tt code --sync
+tt dispatch <host> --context-file <handoff.md> [--name NAME]
+tt dispatch list
+tt recall <name> [--stop]
 
 # Repository worktrees
 tt wt new <name> [-r REPO]
@@ -140,6 +145,7 @@ Global flags such as `-H`, `--tab`, and `--cc` go before the command. See the
 - [Command reference](docs/command-reference.md) — the complete CLI grouped by job
 - [Configuration](docs/configuration.md) — hosts, discovery globs, editable workspace-schema YAML, iTerm2, and state files
 - [Troubleshooting](docs/troubleshooting.md) — common setup and runtime failures
+- [Remote dispatch manual test](DISPATCH_MANUAL_TEST.md) — disposable dispatch and recall validation
 - [AGENTS.md](AGENTS.md) — architecture and contributor conventions
 
 Agent-facing TT work starts with the guided [`$geno-tt`](skills/geno-tt/SKILL.md)
