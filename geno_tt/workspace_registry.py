@@ -346,8 +346,7 @@ def _write_json_atomic(path: Path, data: dict) -> None:
         prefix=f".{path.name}.",
         delete=False,
     ) as handle:
-        json.dump(data, handle, indent=2)
-        handle.write("\n")
+        handle.write(json.dumps(data, indent=2) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
         temporary = Path(handle.name)
