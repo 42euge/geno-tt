@@ -240,6 +240,41 @@ def get_remote_home(hostname: str) -> str:
     return result.stdout.strip()
 
 
+def list_workspace_paths(hostname: str, tracks: tuple[str, ...]) -> list[str]:
+    """List canonical workspace directories, including workspaces with no repos."""
+    home = get_remote_home(hostname)
+    if _is_local(hostname):
+        code_root = Path(home) / "code"
+        workspaces = []
+        for track in tracks:
+            workspaces.extend(
+                str(path)
+                for path in code_root.glob(
+                    f"{track}/*/*.[0-9][0-9][0-9][0-9].q[1-4]"
+                )
+                if path.is_dir()
+            )
+        return sorted(workspaces)
+
+    import shlex
+
+    quoted_home = shlex.quote(home)
+    patterns = " ".join(
+        f"{quoted_home}/code/{track}/*/*.[0-9][0-9][0-9][0-9].q[1-4]"
+        for track in tracks
+    )
+    script = (
+        f"for workspace in {patterns}; do "
+        '[ -d "$workspace" ] && printf "%s\\n" "$workspace"; '
+        "done"
+    )
+    result = _ssh_run(hostname, script)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(detail or f"Could not list workspaces on {hostname}.")
+    return sorted(line for line in result.stdout.splitlines() if line)
+
+
 def count_worktrees(hostname: str, ws_abs_paths: list[str]) -> dict:
     """Count whole-workspace worktrees (subdirs of <ws>/.wt/) per workspace.
 

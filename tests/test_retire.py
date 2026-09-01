@@ -22,6 +22,44 @@ def test_graveyard_destination_preserves_workspace_identity():
     ) == "/home/dev/code/graveyard/chore/geno/demo.2026.q3"
 
 
+def test_resolve_workspace_scans_workspace_dirs_instead_of_repos(monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "list_workspace_paths",
+        lambda _host, _tracks: [
+            "/home/dev/code/chore/geno/demo.2026.q3",
+            "/home/dev/code/chore/geno/empty.2026.q3",
+        ],
+    )
+
+    assert cli._resolve_workspace("build.example.com", "empty", {}) == (
+        "/home/dev/code/chore/geno/empty.2026.q3",
+        "empty.2026.q3",
+    )
+
+
+def test_list_workspace_paths_uses_remote_canonical_globs(monkeypatch):
+    calls = []
+    monkeypatch.setattr(remote, "get_remote_home", lambda _host: "/home/dev")
+
+    def fake_ssh(hostname, script):
+        calls.append((hostname, script))
+        return subprocess.CompletedProcess(
+            [],
+            0,
+            "/home/dev/code/chore/geno/demo.2026.q3\n",
+            "",
+        )
+
+    monkeypatch.setattr(remote, "_ssh_run", fake_ssh)
+
+    assert remote.list_workspace_paths("build.example.com", ("chore",)) == [
+        "/home/dev/code/chore/geno/demo.2026.q3"
+    ]
+    assert calls[0][0] == "build.example.com"
+    assert "/home/dev/code/chore/*/*.[0-9][0-9][0-9][0-9].q[1-4]" in calls[0][1]
+
+
 def test_move_workspace_retires_a_local_workspace(tmp_path):
     source = _workspace(tmp_path)
     destination = (

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path, PurePosixPath
 
 from .config import load_config, resolve_host, SESSIONS_DIR
-from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_repos, list_worktrees, add_worktree, remove_worktree, discover_owner_repos, clone_repos, workspace_repo_remotes, move_workspace, spawn_layout, LOCAL_HOSTNAME
+from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_paths, list_workspace_repos, list_worktrees, add_worktree, remove_worktree, discover_owner_repos, clone_repos, workspace_repo_remotes, move_workspace, spawn_layout, LOCAL_HOSTNAME
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
 from .iterm2 import is_iterm2, should_use_control_mode, should_open_new_tab, emit_pre_connect_sequences
@@ -775,21 +775,18 @@ def _emit_cd(path: str):
 
 def _resolve_workspace(hostname, target, config):
     """Resolve a workspace name (e.g. 'rfsys-180' or 'rfsys-180.2026.q2') to its
-    absolute path on a host by scanning scheme repos. Returns (ws_abs, label).
+    absolute path on a host by scanning canonical workspace dirs.
+
+    Returns (ws_abs, label). Directory discovery also finds empty workspaces.
     """
-    repos = list_repos(hostname, config=config)
-    home = get_remote_home(hostname)
     seen = {}
-    for r in repos:
-        path = r["path"]
-        rel = path[len(home) + 1:] if path.startswith(home) else path
-        f = _parse_rel(rel)
-        if not f["track"]:
+    for workspace in list_workspace_paths(hostname, TRACKS):
+        match = _BORN_RE.fullmatch(PurePosixPath(workspace).name)
+        if match is None:
             continue
-        ws_seg = f"{f['workspace']}.{f['born']}" if f["born"] else f["workspace"]
-        if target in (f["workspace"], ws_seg):
-            ws_abs = path.rsplit("/", 1)[0]
-            seen[ws_abs] = ws_seg
+        label = PurePosixPath(workspace).name
+        if target in (match.group("slug"), label):
+            seen[workspace] = label
     if not seen:
         raise SystemExit(f"No workspace matching '{target}' on host. Try tt inv.")
     if len(seen) > 1:
