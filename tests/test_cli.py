@@ -26,6 +26,7 @@ from geno_tt.cli import (
     cmd_workspaces,
     main,
     cmd_registry,
+    cmd_resume,
 )
 
 
@@ -707,3 +708,116 @@ def test_registry_refresh_targets_the_selected_host(monkeypatch, capsys):
         "Refreshed 2 workspace(s) in "
         "build.example.com:~/.geno/tt/workspaces.json\n"
     )
+
+
+def test_resume_attaches_the_most_recent_registered_tmux_session(monkeypatch):
+    calls = []
+    workspace = {
+        "id": "explore.geno.voice.2026.q3",
+        "name": "voice",
+        "born": "2026.q3",
+        "path": "/home/dev/code/explore/geno/voice.2026.q3",
+        "state": {"tmux": {"sessions": [
+            {"session_name": "voice-old", "session_activity": 100},
+            {"session_name": "voice-current", "session_activity": 200},
+        ]}},
+    }
+
+    class FakeRegistry:
+        def __init__(self, hostname):
+            calls.append(("host", hostname))
+
+        def workspace(self, reference, *, refresh):
+            calls.append(("workspace", reference, refresh))
+            return workspace
+
+    monkeypatch.setattr(
+        "geno_tt.workspace_registry.WorkspaceRegistry", FakeRegistry,
+    )
+    monkeypatch.setattr(cli, "_ensure_session_dir", lambda folder: f"/state/{folder}")
+    monkeypatch.setattr(cli, "_iterm2_opts", lambda *_args: (False, False, None))
+    monkeypatch.setattr(
+        cli,
+        "spawn_layout",
+        lambda *_args: pytest.fail("registered state should be resumed"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "attach_session",
+        lambda hostname, session_name, **kwargs: calls.append(
+            ("attach", hostname, session_name, kwargs)
+        ),
+    )
+    config = {
+        "default_host": "build",
+        "hosts": {"build": "build.example.com"},
+    }
+
+    cmd_resume(
+        argparse.Namespace(workspace="explore.geno.voice.2026.q3"),
+        config,
+    )
+
+    assert calls[-1][0:3] == (
+        "attach", "build.example.com", "voice-current",
+    )
+    assert calls[-1][3]["local_dir"] == "/state/voice.2026.q3"
+
+
+def test_resume_creates_and_registers_state_when_workspace_has_none(monkeypatch):
+    calls = []
+    base = {
+        "id": "explore.geno.voice.2026.q3",
+        "name": "voice",
+        "born": "2026.q3",
+        "path": "/home/dev/code/explore/geno/voice.2026.q3",
+    }
+
+    class FakeRegistry:
+        display_path = "build.example.com:~/.geno/tt/workspaces.json"
+
+        def __init__(self, hostname):
+            calls.append(("host", hostname))
+            self.reads = 0
+
+        def workspace(self, reference, *, refresh):
+            self.reads += 1
+            calls.append(("workspace", reference, refresh))
+            sessions = [] if self.reads == 1 else [{
+                "session_name": "ws-voice",
+                "session_activity": 200,
+            }]
+            return {
+                **base,
+                "state": {"tmux": {"sessions": sessions}},
+            }
+
+    monkeypatch.setattr(
+        "geno_tt.workspace_registry.WorkspaceRegistry", FakeRegistry,
+    )
+    monkeypatch.setattr(cli, "_ensure_session_dir", lambda folder: f"/state/{folder}")
+    monkeypatch.setattr(cli, "_iterm2_opts", lambda *_args: (False, False, None))
+    monkeypatch.setattr(
+        cli,
+        "spawn_layout",
+        lambda *args: calls.append(("spawn", *args)),
+    )
+    monkeypatch.setattr(
+        cli,
+        "attach_session",
+        lambda hostname, session_name, **kwargs: calls.append(
+            ("attach", hostname, session_name, kwargs)
+        ),
+    )
+    config = {
+        "default_host": "build",
+        "hosts": {"build": "build.example.com"},
+    }
+
+    cmd_resume(
+        argparse.Namespace(workspace="explore.geno.voice.2026.q3"),
+        config,
+    )
+
+    assert ("spawn", "build.example.com", base["path"], "ws-voice", 1, 1) in calls
+    assert calls[-1][0:3] == ("attach", "build.example.com", "ws-voice")

@@ -1771,6 +1771,9 @@ def cmd_attach(args, config):
     sub = getattr(args, "sub", None)
 
     def _do_attach(session_name: str, folder: str):
+        from .workspace_registry import WorkspaceRegistry
+
+        WorkspaceRegistry(hostname).load(refresh=True)
         local_dir = _ensure_session_dir(folder)
         cc, tab, pre = _iterm2_opts(config, alias, session_name, folder)
         attach_session(hostname, session_name, local_dir=local_dir,
@@ -2655,7 +2658,70 @@ def cmd_spawn(args, config):
     n, m = args.agents, args.shells
     print(f"Spawning session '{session}' in {alias}:{label}  ({n} agent + {m} shell panes)")
     spawn_layout(hostname, ws_abs, session, n, m)
+    from .workspace_registry import WorkspaceRegistry
+
+    WorkspaceRegistry(hostname).load(refresh=True)
     print(f"  attach: tt {session}")
+
+
+def cmd_resume(args, config):
+    """Resume the live tmux session registered for a workspace.
+
+    If the refreshed host-owned registry has no session for the workspace,
+    create the standard workspace layout, refresh state, and attach to it.
+    """
+    from .workspace_registry import RegistryError, WorkspaceRegistry
+
+    alias, hostname = resolve_host(config)
+    registry = WorkspaceRegistry(hostname)
+    try:
+        workspace = registry.workspace(args.workspace, refresh=True)
+    except RegistryError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    sessions = workspace.get("state", {}).get("tmux", {}).get("sessions", [])
+    if sessions:
+        session = max(
+            sessions,
+            key=lambda item: (item.get("session_activity", 0), item["session_name"]),
+        )
+        print(
+            f"Resuming registered session '{session['session_name']}' "
+            f"in {alias}:{workspace['name']}.{workspace['born']}"
+        )
+    else:
+        session_name = f"ws-{workspace['name']}"
+        print(
+            f"No registered tmux session for {workspace['name']}.{workspace['born']}; "
+            f"creating '{session_name}'"
+        )
+        spawn_layout(hostname, workspace["path"], session_name, 1, 1)
+        try:
+            workspace = registry.workspace(args.workspace, refresh=True)
+        except RegistryError as exc:
+            raise SystemExit(str(exc)) from exc
+        sessions = workspace.get("state", {}).get("tmux", {}).get("sessions", [])
+        session = next(
+            (item for item in sessions if item["session_name"] == session_name),
+            None,
+        )
+        if session is None:
+            raise SystemExit(
+                f"Created tmux session '{session_name}', but it was not recorded in "
+                f"{registry.display_path}."
+            )
+
+    folder = f"{workspace['name']}.{workspace['born']}"
+    local_dir = _ensure_session_dir(folder)
+    cc, tab, pre = _iterm2_opts(config, alias, session["session_name"], folder)
+    attach_session(
+        hostname,
+        session["session_name"],
+        local_dir=local_dir,
+        control_mode=cc,
+        new_tab=tab,
+        iterm2_pre_lines=pre,
+    )
 
 
 _MOVED_ITERM_COMMANDS = {"focus", "fork", "tab", "new-task", "name"}
@@ -2760,6 +2826,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt tmux recover      Reattach to live sessions")
         print("  tt tmux tui [s]      Interactive TUI session manager")
         print("  tt tmux spawn <ws> [--agents N] [--shells M]")
+        print("  tt tmux resume <ws>  Resume the session stored in the workspace registry")
         print("  tt <target> [sub]    (shorthand attach — still works)")
         print("")
         print("hosts / appearance:")
@@ -2799,6 +2866,10 @@ def main(argv: list[str] | None = None) -> int:
             sp.add_argument("--agents", type=int, default=1)
             sp.add_argument("--shells", type=int, default=1)
             cmd_spawn(sp.parse_args(argv[2:]), config)
+        elif sub in ("resume",):
+            if len(argv) < 3:
+                raise SystemExit("Usage: tt tmux resume <workspace>")
+            cmd_resume(argparse.Namespace(workspace=argv[2]), config)
         else:
             # bare 'tt tmux <target>' — attach
             cmd_attach(argparse.Namespace(target=sub, sub=argv[2] if len(argv) > 2 else None,

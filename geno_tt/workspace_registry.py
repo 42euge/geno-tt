@@ -22,6 +22,10 @@ SCHEMA_VERSION = 1
 REGISTRY_RELATIVE_PATH = ".geno/tt/workspaces.json"
 LOCAL_HOSTNAME = "localhost"
 _BORN_RE = re.compile(r"^(?P<name>.+)\.(?P<born>\d{4}\.q[1-4])$")
+_TMUX_FORMAT = (
+    "T\t#{session_name}\t#{pane_current_path}\t"
+    "#{pane_current_command}\t#{session_activity}"
+)
 
 
 class RegistryError(RuntimeError):
@@ -40,7 +44,10 @@ class WorkspaceRegistry:
     ):
         self.hostname = hostname
         if hostname == LOCAL_HOSTNAME:
-            self._adapter = _LocalRegistryAdapter(home or Path.home())
+            self._adapter = _LocalRegistryAdapter(
+                home or Path.home(),
+                runner=runner or subprocess.run,
+            )
         else:
             self._adapter = _SshRegistryAdapter(
                 hostname,
@@ -81,14 +88,51 @@ class WorkspaceRegistry:
         ]
         return sorted(repos, key=lambda repo: repo["path"])
 
+    def workspace(self, reference: str, *, refresh: bool = True) -> dict:
+        """Resolve one workspace from its id, name, versioned name, or path."""
+        matches = []
+        for workspace in self.load(refresh=refresh)["workspaces"]:
+            names = {
+                workspace["id"],
+                workspace["name"],
+                f"{workspace['name']}.{workspace['born']}",
+                workspace["path"],
+            }
+            if reference in names:
+                matches.append(workspace)
+        if not matches:
+            raise RegistryError(f"No workspace matching '{reference}' on {self.hostname}")
+        if len(matches) > 1:
+            choices = ", ".join(sorted(workspace["id"] for workspace in matches))
+            raise RegistryError(
+                f"Workspace '{reference}' is ambiguous on {self.hostname}: {choices}"
+            )
+        return matches[0]
+
 
 class _LocalRegistryAdapter:
-    def __init__(self, home: Path):
+    def __init__(self, home: Path, runner: Callable):
         self.home = Path(home)
         self.path = self.home / REGISTRY_RELATIVE_PATH
+        self._run = runner
 
     def refresh(self) -> None:
-        registry = _build_local_registry(self.home, LOCAL_HOSTNAME)
+        try:
+            tmux = self._run(
+                ["tmux", "list-windows", "-a", "-F", _TMUX_FORMAT],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            tmux_output = ""
+        else:
+            tmux_output = tmux.stdout if tmux.returncode == 0 else ""
+        registry = _build_local_registry(
+            self.home,
+            LOCAL_HOSTNAME,
+            tmux_output=tmux_output,
+        )
         _write_json_atomic(self.path, registry)
         _remove_legacy_repo_caches(self.home)
 
@@ -183,7 +227,12 @@ def _timestamp(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
 
 
-def _build_local_registry(home: Path, hostname: str) -> dict:
+def _build_local_registry(
+    home: Path,
+    hostname: str,
+    *,
+    tmux_output: str = "",
+) -> dict:
     workspaces = []
     code_root = home / "code"
     if code_root.is_dir():
@@ -208,7 +257,11 @@ def _build_local_registry(home: Path, hostname: str) -> dict:
             record = _workspace_record(workspace, repos)
             if record is not None:
                 workspaces.append(record)
-    return _registry_document(hostname, workspaces)
+    return _registry_document(
+        hostname,
+        workspaces,
+        tmux_sessions=_tmux_sessions(tmux_output),
+    )
 
 
 def _build_remote_registry(hostname: str, scan_output: str) -> dict:
@@ -231,10 +284,52 @@ def _build_remote_registry(hostname: str, scan_output: str) -> dict:
         record = _workspace_record(PurePosixPath(path), repos)
         if record is not None:
             records.append(record)
-    return _registry_document(hostname, records)
+    return _registry_document(
+        hostname,
+        records,
+        tmux_sessions=_tmux_sessions(scan_output),
+    )
 
 
-def _registry_document(hostname: str, workspaces: list[dict]) -> dict:
+def _tmux_sessions(output: str) -> list[dict]:
+    sessions = []
+    seen = set()
+    for line in output.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 5 or fields[0] != "T" or fields[1] in seen:
+            continue
+        seen.add(fields[1])
+        sessions.append({
+            "session_name": fields[1],
+            "pane_current_path": fields[2],
+            "pane_current_command": fields[3],
+            "session_activity": int(fields[4]) if fields[4].isdigit() else 0,
+        })
+    return sorted(sessions, key=lambda session: session["session_name"])
+
+
+def _session_is_in_workspace(session: dict, workspace: dict) -> bool:
+    try:
+        PurePosixPath(session["pane_current_path"]).relative_to(workspace["path"])
+    except (KeyError, ValueError):
+        return False
+    return True
+
+
+def _registry_document(
+    hostname: str,
+    workspaces: list[dict],
+    *,
+    tmux_sessions: list[dict] | None = None,
+) -> dict:
+    tmux_sessions = tmux_sessions or []
+    for workspace in workspaces:
+        sessions = [
+            dict(session)
+            for session in tmux_sessions
+            if _session_is_in_workspace(session, workspace)
+        ]
+        workspace["state"] = {"tmux": {"sessions": sessions}}
     return {
         "schema_version": SCHEMA_VERSION,
         "host": hostname,
@@ -289,7 +384,8 @@ for ws in "$HOME"/code/*/*/*.[0-9][0-9][0-9][0-9].q[1-4]; do
     accessed="$(stat -c %X "$repo" 2>/dev/null || stat -f %a "$repo" 2>/dev/null || echo unknown)"
     printf 'R\t%s\t%s\n' "$repo" "$accessed"
   done
-done'''
+done
+tmux list-windows -a -F 'T	#{session_name}	#{pane_current_path}	#{pane_current_command}	#{session_activity}' 2>/dev/null || true'''
 
 _REMOTE_WRITE_SCRIPT = r'''set -eu
 : TT_REGISTRY_WRITE

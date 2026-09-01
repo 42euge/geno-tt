@@ -38,6 +38,7 @@ def test_local_registry_is_one_authoritative_file_and_refreshes_changes(tmp_path
             "path": str(workspace / "geno-voice"),
             "last_accessed": first["workspaces"][0]["repos"][0]["last_accessed"],
         }],
+        "state": {"tmux": {"sessions": []}},
     }]
 
     (workspace / "audio-tools" / ".git").mkdir(parents=True)
@@ -60,6 +61,33 @@ def test_local_registry_ignores_noncanonical_and_worktree_directories(tmp_path):
 
     assert [w["path"] for w in data["workspaces"]] == [str(workspace)]
     assert [r["name"] for r in data["workspaces"][0]["repos"]] == ["geno-voice"]
+
+
+def test_local_registry_records_live_tmux_state_under_its_workspace(tmp_path):
+    workspace = _make_workspace(tmp_path)
+
+    def run(argv, **_kwargs):
+        assert argv[:3] == ["tmux", "list-windows", "-a"]
+        output = (
+            f"T\tws-voice\t{workspace / 'geno-voice'}\tcodex\t1725000000\n"
+            f"T\tother\t{tmp_path / 'somewhere-else'}\tzsh\t1724000000\n"
+        )
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    data = WorkspaceRegistry("localhost", home=tmp_path, runner=run).load(
+        refresh=True
+    )
+
+    assert data["workspaces"][0]["state"] == {
+        "tmux": {
+            "sessions": [{
+                "session_name": "ws-voice",
+                "pane_current_path": str(workspace / "geno-voice"),
+                "pane_current_command": "codex",
+                "session_activity": 1725000000,
+            }],
+        },
+    }
 
 
 class RemoteHost:
@@ -87,6 +115,7 @@ def test_remote_registry_refreshes_and_reads_the_file_on_the_remote_host():
     remote.scan_text = (
         "W\t/home/dev/code/explore/geno/voice.2026.q3\n"
         "R\t/home/dev/code/explore/geno/voice.2026.q3/geno-voice\t100\n"
+        "T\tws-voice\t/home/dev/code/explore/geno/voice.2026.q3\tcodex\t200\n"
     )
     registry = WorkspaceRegistry("build.example.com", runner=remote.run)
 
@@ -99,6 +128,9 @@ def test_remote_registry_refreshes_and_reads_the_file_on_the_remote_host():
         ["ssh", "build.example.com"],
     ]
     assert [r["name"] for r in first["workspaces"][0]["repos"]] == ["geno-voice"]
+    assert first["workspaces"][0]["state"]["tmux"]["sessions"][0][
+        "session_name"
+    ] == "ws-voice"
     assert json.loads(remote.registry_text) == first
 
     remote.scan_text += (
@@ -140,6 +172,15 @@ def test_repo_projection_preserves_the_existing_list_repos_contract(tmp_path):
         str(workspace / "geno-voice"),
     ]
     assert all("last_accessed" in repo for repo in repos)
+
+
+def test_workspace_resolves_the_stable_registry_id(tmp_path):
+    workspace = _make_workspace(tmp_path)
+    registry = WorkspaceRegistry("localhost", home=tmp_path)
+
+    selected = registry.workspace("explore.geno.voice.2026.q3", refresh=True)
+
+    assert selected["path"] == str(workspace)
 
 
 def test_list_repos_always_refreshes_the_registry_owned_by_that_host(monkeypatch):
