@@ -33,15 +33,27 @@ Important modules:
 
 ## Domain invariants
 
-Canonical workspaces use:
+The packaged workspace schema defaults to:
 
 ```text
 ~/code/<track>/<domain>/<workspace>.<born>/<repo>
 ```
 
-- Tracks are `crit`, `explore`, `chore`, and `side`.
+- Tracks default to `crit`, `explore`, `chore`, and `side` and are editable in
+  the workspace schema.
 - `born` is the quarter when the workspace started and never changes.
-- A workspace contains one or more top-level Git repositories.
+- A workspace contains one or more top-level Git repositories whose directory
+  template comes from the workspace schema.
+- Every workspace-management mutation reconciles the workspace overlay through
+  `geno_tt.workspace_overlay.reconcile_workspace`; do not duplicate its folder,
+  naming, tag, theme, or generated-context rules in callers.
+- Workspace creation and overlay rules come from the validated
+  `geno_tt/workspace-schema.yaml`, overridden by
+  `~/.geno/tt/workspace-schema.yaml`; keep YAML parsing and validation behind
+  `geno_tt.workspace_schema.load_workspace_schema`.
+- Generated workspace instructions use `AGENTS.md` as the canonical file and a
+  relative `CLAUDE.md -> AGENTS.md` symlink. Never replace unmanaged instruction
+  files or conflicting links during reconciliation.
 - Whole-workspace worktrees live under `<workspace>/.wt/<name>/<repo>` and use
   branch `wt/<name>` in every repository.
 - Hosts come from `~/.geno/tt/config.toml`; never hard-code environment host
@@ -59,8 +71,8 @@ Canonical workspaces use:
   Python so it remains testable.
 - Keep public command examples executable against the current parser. Global
   flags such as `-H`, `--tab`, and `--cc` precede the command.
-- Do not add a separate `tt overlay` command. Opening a canonical local
-  workspace with `tt code` owns overlay generation.
+- Do not add a separate `tt overlay` command. `tt code` reconciles while
+  opening; `tt workspaces check --fix` reconciles without opening.
 - When changing package behavior, update the relevant user guide and focused
   skill contract in the same change.
 - Add a focused skill at `skills/<category>/<name>/SKILL.md`. Its frontmatter

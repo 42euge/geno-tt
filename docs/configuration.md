@@ -83,6 +83,88 @@ canonical layout. Configure `repo_dirs` explicitly when using `tt inv`,
 Repository caches are refreshed by inventory operations and stored under
 `~/.geno/tt/cache/`.
 
+## Workspace schema
+
+The editable workspace schema lives at:
+
+```text
+~/.geno/tt/workspace-schema.yaml
+```
+
+The bootstrap copies the packaged default there once and never overwrites it.
+When the user-owned file is absent, `tt` falls back to the packaged
+`geno_tt/workspace-schema.yaml`.
+
+```yaml
+version: 1
+
+tracks:
+  - crit
+  - explore
+  - chore
+  - side
+
+layout:
+  born: "{year}.q{quarter}"
+  workspace: "code/{track}/{domain}/{workspace}.{born}"
+  repository: "{repo}"
+
+overlay:
+  file: "{workspace}.code-workspace"
+  tag_separator: "-"
+  root:
+    name: "{workspace_born}"
+    path: "."
+  repository:
+    name: "{repo}{tag_suffix}"
+    path: "{repository_path}"
+  default_themes:
+    - Dark Modern
+    - Dark+
+
+agent_context:
+  file: "AGENTS.md"
+  symlinks:
+    - CLAUDE.md
+  migrate_from:
+    - CLAUDE.local.md
+  managed_marker: "<!-- generated-by-tt-overlay -->"
+  preserve_from: "## Local context"
+  template: |
+    # Workspace: {workspace_born}
+
+    <!-- generated-by-tt-overlay -->
+
+    {track} · {repo_count} repos · {repos}
+```
+
+The schema controls accepted tracks, the born stamp, workspace/repository
+directory templates, `.code-workspace` naming and folder entries, the tag
+separator, VS Code theme fallback order, and generated agent instructions.
+By default `AGENTS.md` is canonical and `CLAUDE.md` is a relative symlink to
+it, so agent-neutral and Claude-specific discovery read identical content.
+The repository template may add a prefix or suffix, such as
+`src-{repo}`. It must remain one top-level directory so mirror and whole-
+workspace worktree operations keep the same repository model.
+
+`tt` validates the complete schema before creating or repairing anything.
+Templates reject unknown or missing fields, paths must stay relative, and
+invalid YAML stops the command without writes. To keep the runtime
+dependency-free, this file supports the schema's intentionally small YAML
+surface: mappings, scalar lists, quoted or plain scalars, and `|` literal
+blocks.
+
+During repair, a TT-generated `CLAUDE.local.md` listed under `migrate_from` is
+used to seed `AGENTS.md`, including its preserved `## Local context` section,
+then removed after the new file and symlink succeed. Existing files without
+the configured `managed_marker` and existing noncanonical symlinks are reported
+for manual resolution and never overwritten.
+
+Changing layout templates affects future creation and discovery. It does not
+move existing workspace or repository directories. If `layout.workspace`
+changes the repository directory's depth beneath `~/code`, update `repo_dirs`
+above so inventory can discover the new paths.
+
 ## iTerm2 attach behavior
 
 ```toml
@@ -151,6 +233,7 @@ outside any matching workspace. Saved iTerm2 themes themselves live under
 | Path | Purpose |
 | --- | --- |
 | `~/.geno/tt/config.toml` | Main configuration |
+| `~/.geno/tt/workspace-schema.yaml` | Editable workspace creation and overlay schema |
 | `~/.geno/tt/init.sh` | Interactive shell wrapper and iTerm2 CWD/color hooks |
 | `~/.geno/tt/sessions/` | Local pointers used to recover tmux sessions |
 | `~/.geno/tt/cache/` | Repository discovery caches |

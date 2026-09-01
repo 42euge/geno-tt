@@ -14,6 +14,15 @@ from .remote import get_sessions, attach_session, kill_session, new_session, get
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
 from .iterm2 import is_iterm2, should_use_control_mode, should_open_new_tab, emit_pre_connect_sequences
+from .workspace_overlay import (
+    WorkspaceOverlayError,
+    reconcile_workspace,
+)
+from .workspace_schema import (
+    WorkspaceSchema,
+    WorkspaceSchemaError,
+    load_workspace_schema,
+)
 
 
 def _detect_session_context() -> str | None:
@@ -61,7 +70,6 @@ _DIM = "\033[2m"
 # Scheme: ~/code/<track>/<domain>/<workspace>.<born>/<repo>
 # A workspace holds 1..N repos. Whole-workspace worktrees live in a hidden
 # .wt/<name>/<repo> inside the workspace (collapsed; never scanned).
-TRACKS = ("crit", "explore", "chore", "side")
 WT_DIR = ".wt"
 # Each track maps to an ANSI code (reusing _COLOR_CODES values).
 _TRACK_COLORS = {
@@ -70,7 +78,12 @@ _TRACK_COLORS = {
     "chore": _COLOR_CODES["yellow"],
     "side": _COLOR_CODES["purp"],
 }
-_BORN_RE = re.compile(r"^(?P<slug>.+)\.(?P<born>\d{4}\.q[1-4])$")
+def _schema() -> WorkspaceSchema:
+    """Load the active schema and present validation errors as CLI failures."""
+    try:
+        return load_workspace_schema()
+    except WorkspaceSchemaError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def _parse_rel(rel: str) -> dict:
@@ -84,14 +97,14 @@ def _parse_rel(rel: str) -> dict:
     human label shown after the group.
     """
     parts = rel.split("/")
-    # New scheme: code/<track>/<domain>/<workspace>.<born>/<repo>
-    # Gate on a known track so legacy ~/code/code-<color>/... (also 4-deep)
-    # isn't misparsed as scheme.
-    if len(parts) >= 5 and parts[0] == "code" and parts[1] in TRACKS:
-        track, domain, ws_seg, repo = parts[1], parts[2], parts[3], parts[4]
-        m = _BORN_RE.match(ws_seg)
-        workspace = m.group("slug") if m else ws_seg
-        born = m.group("born") if m else ""
+    fields = _schema().match_repo_relative(rel)
+    if fields is not None:
+        track = fields["track"]
+        domain = fields["domain"]
+        workspace = fields["workspace"]
+        born = fields["born"]
+        repo = fields["repo"]
+        ws_seg = fields["workspace_born"]
         return {
             "track": track, "domain": domain, "workspace": workspace,
             "born": born, "repo": repo,
@@ -102,7 +115,8 @@ def _parse_rel(rel: str) -> dict:
     group = parts[0] if len(parts) > 1 else ""
     leaf = "/".join(parts[1:]) if len(parts) > 1 else rel
     return {
-        "track": "", "domain": "", "workspace": leaf, "born": "", "repo": "",
+        "track": "", "domain": "", "workspace": leaf,
+        "workspace_born": leaf, "born": "", "repo": "",
         "group": group, "leaf": leaf,
     }
 
@@ -185,7 +199,9 @@ def _repos_data(config, all_hosts: bool = False):
                 "idx": global_idx, "path": repo_path,
                 "leaf": fields["leaf"], "group": fields["group"],
                 "track": fields["track"], "domain": fields["domain"],
-                "workspace": fields["workspace"], "born": fields["born"],
+                "workspace": fields["workspace"],
+                "workspace_born": fields["workspace_born"],
+                "born": fields["born"],
                 "repo": fields["repo"],
                 "session_count": session_count,
                 "age": age, "age_days": age_days, "rel": rel,
@@ -369,7 +385,7 @@ def _repos_inv(results, track_filter=None, domain_filter=None, expand=False):
         # track -> domain -> "workspace.born" -> [repo rows]
         tree: OrderedDict[str, OrderedDict[str, OrderedDict[str, list]]] = OrderedDict()
         for r in scheme:
-            ws = f"{r['workspace']}.{r['born']}" if r["born"] else r["workspace"]
+            ws = r["workspace_born"]
             tree.setdefault(r["track"], OrderedDict()) \
                 .setdefault(r["domain"], OrderedDict()) \
                 .setdefault(ws, []).append(r)
@@ -383,7 +399,8 @@ def _repos_inv(results, track_filter=None, domain_filter=None, expand=False):
 
         total_ws = sum(len(projs) for doms in tree.values() for projs in doms.values())
         print(f"{_BOLD}{alias}{_RESET} {_DIM}— {total_ws} workspaces{_RESET}")
-        track_order = [t for t in TRACKS if t in tree] + [t for t in tree if t not in TRACKS]
+        tracks = _schema().tracks
+        track_order = [t for t in tracks if t in tree] + [t for t in tree if t not in tracks]
         for track in track_order:
             color = _color_for_group(track)
             print(f"  {color}{_BOLD}{track}{_RESET}")
@@ -700,11 +717,35 @@ def cmd_inv(args, config):
                expand=getattr(args, "expand", False))
 
 
-def _current_quarter() -> str:
+def _current_quarter(schema: WorkspaceSchema | None = None) -> str:
     """Return the current born-quarter, e.g. 2026.q2."""
     from datetime import date
-    d = date.today()
-    return f"{d.year}.q{(d.month - 1) // 3 + 1}"
+    return (schema or _schema()).born_for(date.today())
+
+
+def _parse_workspace_spec(
+    spec: str,
+    schema: WorkspaceSchema | None = None,
+) -> tuple[str, str, str, str]:
+    loaded = schema or _schema()
+    parts = spec.split(".")
+    if len(parts) not in (3, 4):
+        raise SystemExit(
+            "Usage: tt new-project <track>.<domain>.<workspace>[.<repo>]  "
+            "(e.g. crit.ngrt.deploy-split)"
+        )
+    if any(not re.fullmatch(r"[A-Za-z0-9_-]+", part) for part in parts):
+        raise SystemExit(
+            "Workspace track, domain, workspace, and repo names may contain "
+            "only letters, numbers, '_' and '-'"
+        )
+    track, domain, workspace = parts[:3]
+    repo = parts[3] if len(parts) == 4 else workspace
+    if track not in loaded.tracks:
+        raise SystemExit(
+            f"Unknown track '{track}'. Use one of: {', '.join(loaded.tracks)}"
+        )
+    return track, domain, workspace, repo
 
 
 def cmd_scaffold(args, config):
@@ -715,43 +756,48 @@ def cmd_scaffold(args, config):
     to the workspace name (the common single-repo case). cds into the repo dir.
     """
     alias, hostname = resolve_host(config)
-    parts = args.spec.split(".")
-    if len(parts) < 3:
-        raise SystemExit("Usage: tt new-project <track>.<domain>.<workspace>[.<repo>]  "
-                         "(e.g. crit.ngrt.deploy-split)")
-    track, domain, workspace = parts[0], parts[1], parts[2]
-    repo = parts[3] if len(parts) > 3 else workspace
-    if track not in TRACKS:
-        raise SystemExit(f"Unknown track '{track}'. Use one of: {', '.join(TRACKS)}")
+    schema = _schema()
+    track, domain, workspace, repo = _parse_workspace_spec(args.spec, schema)
 
-    born = _current_quarter()
-    rel = f"code/{track}/{domain}/{workspace}.{born}/{repo}"
+    born = _current_quarter(schema)
+    rel = str(PurePosixPath(
+        schema.workspace_relative(track, domain, workspace, born)
+    ) / schema.repository_relative(repo))
     abs_path = scaffold_project(hostname, rel)
+    match = schema.match_workspace(abs_path)
+    if match is None:
+        raise SystemExit(f"Created path does not match {schema.source}: {abs_path}")
+    workspace_root = match.root
+    overlay = _reconcile_workspace(
+        hostname,
+        workspace_root,
+        fix=True,
+        seed_repos=(repo,),
+    )
     print(f"Created {alias}:{abs_path}")
-    print(f"  {_DIM}workspace {workspace}.{born} · repo {repo}{_RESET}")
+    print(f"  {_DIM}workspace {match.workspace_born} · repo {repo}{_RESET}")
+    print(f"  {_DIM}overlay {overlay.workspace_file}{_RESET}")
 
     if hostname == LOCAL_HOSTNAME:
         _emit_cd(abs_path)
 
 
-_WS_RE = re.compile(r"(.*/code/(?:" + "|".join(TRACKS) + r")/[^/]+/[^/]+\.\d{4}\.q[1-4])(?:/|$)")
-
-
 def _graveyard_destination(home: str, workspace: str) -> str:
     """Return the reserved graveyard path for a canonical TT workspace."""
+    schema = _schema()
+    home_root = PurePosixPath(home)
     code_root = PurePosixPath(home) / "code"
     source = PurePosixPath(workspace)
     try:
-        relative = source.relative_to(code_root)
+        source.relative_to(home_root)
     except ValueError as exc:
-        raise SystemExit(f"Workspace is outside the TT code root: {workspace}") from exc
-    if (
-        len(relative.parts) != 3
-        or relative.parts[0] not in TRACKS
-        or _BORN_RE.fullmatch(relative.parts[2]) is None
-    ):
+        raise SystemExit(f"Workspace is outside the TT home: {workspace}") from exc
+    match = schema.match_workspace(workspace)
+    if match is None or PurePosixPath(match.root) != source:
         raise SystemExit(f"Not a canonical TT workspace: {workspace}")
-    return str(code_root / "graveyard" / relative)
+    return str(
+        code_root / "graveyard" / match.track / match.domain / match.workspace_born
+    )
 
 
 def _detect_workspace() -> str | None:
@@ -760,8 +806,8 @@ def _detect_workspace() -> str | None:
     Matches the workspace dir even when standing in a repo or a .wt worktree
     under it: .../code/<track>/<domain>/<ws>.<born>.
     """
-    m = _WS_RE.match(str(Path.cwd()))
-    return m.group(1) if m else None
+    match = _schema().match_workspace(str(Path.cwd()))
+    return match.root if match else None
 
 
 def _emit_cd(path: str):
@@ -779,14 +825,14 @@ def _resolve_workspace(hostname, target, config):
 
     Returns (ws_abs, label). Directory discovery also finds empty workspaces.
     """
+    schema = _schema()
     seen = {}
-    for workspace in list_workspace_paths(hostname, TRACKS):
-        match = _BORN_RE.fullmatch(PurePosixPath(workspace).name)
-        if match is None:
+    for workspace in list_workspace_paths(hostname, schema.tracks):
+        match = schema.match_workspace(workspace)
+        if match is None or match.root != workspace:
             continue
-        label = PurePosixPath(workspace).name
-        if target in (match.group("slug"), label):
-            seen[workspace] = label
+        if target in (match.workspace, match.workspace_born):
+            seen[match.root] = match.workspace_born
     if not seen:
         raise SystemExit(f"No workspace matching '{target}' on host. Try tt inv.")
     if len(seen) > 1:
@@ -1991,14 +2037,15 @@ def cmd_code(args, config):
             local_target.is_dir()
             and local_target.resolve() == workspace.resolve()
         )
+        overlay = _reconcile_workspace(
+            LOCAL_HOSTNAME,
+            str(workspace),
+            fix=True,
+            theme=theme,
+            tags=tags,
+        )
         if theme is not None or tags or opening_workspace:
-            # Opening a workspace always prepares its multi-root file, so a
-            # freshly scaffolded workspace opens as one window instead of a
-            # bare folder. Without --theme we fall back to the default rather
-            # than refusing: a theme is a preference, not a prerequisite.
-            launch_target = _prepare_code_workspace(
-                workspace, theme or _default_vscode_theme(), tags
-            )
+            launch_target = Path(overlay.workspace_file)
 
         folder = str(launch_target)
         launched_uri = launch_target.resolve().as_uri()
@@ -2013,17 +2060,36 @@ def cmd_code(args, config):
         else:
             command = ["code", "--new-window", folder]
     else:
-        if target.startswith(("/", "~/")) and not _WS_RE.match(folder):
+        workspace_match = _schema().match_workspace(folder)
+        if target.startswith(("/", "~/")) and not workspace_match:
             raise SystemExit(
                 f"Path '{target}' is not registered in TT. "
                 "Ask whether to create or migrate it with "
                 "geno-tt-workspaces-create."
             )
-        if theme is not None or tags:
-            raise SystemExit("--theme and --tag currently prepare local TT workspaces only")
-        uri = f"vscode-remote://ssh-remote+{hostname}{folder}"
+        if not workspace_match:
+            raise SystemExit(f"Remote repo '{folder}' is outside a canonical TT workspace")
+        workspace_root = workspace_match.root
+        overlay = _reconcile_workspace(
+            hostname,
+            workspace_root,
+            fix=True,
+            theme=theme,
+            tags=tags,
+        )
+        opening_workspace = folder.rstrip("/") == workspace_root.rstrip("/")
+        launch_path = (
+            overlay.workspace_file
+            if theme is not None or tags or opening_workspace
+            else folder
+        )
+        uri = f"vscode-remote://ssh-remote+{hostname}{launch_path}"
         launched_uri = uri
-        command = ["code", "--new-window", "--folder-uri", uri]
+        command = (
+            ["code", "--new-window", uri]
+            if launch_path.endswith(".code-workspace")
+            else ["code", "--new-window", "--folder-uri", uri]
+        )
 
     try:
         subprocess.run(
@@ -2057,28 +2123,8 @@ def cmd_code(args, config):
 def _tt_workspace_root(path: Path) -> Path | None:
     """Return the canonical TT workspace containing a local target."""
     candidate = path.resolve()
-    m = _WS_RE.match(str(candidate))
-    return Path(m.group(1)) if m else None
-
-
-def _workspace_slug(workspace: Path) -> str:
-    match = _BORN_RE.match(workspace.name)
-    return match.group("slug") if match else workspace.name
-
-
-def _find_code_workspace(workspace: Path) -> Path | None:
-    preferred = workspace / f"{_workspace_slug(workspace)}.code-workspace"
-    if preferred.exists():
-        return preferred
-    candidates = sorted(workspace.glob("*.code-workspace"))
-    if len(candidates) == 1:
-        return candidates[0]
-    if len(candidates) > 1:
-        raise SystemExit(
-            f"Multiple VS Code workspace files found in {workspace}; "
-            f"create or select {preferred.name}."
-        )
-    return None
+    match = _schema().match_workspace(str(candidate))
+    return Path(match.root) if match else None
 
 
 def _parse_code_tags(values: list[str]) -> dict[str, str]:
@@ -2134,13 +2180,11 @@ def _installed_vscode_themes(roots: list[Path] | None = None) -> set[str]:
     return labels
 
 
-# VS Code's own default, and the fallbacks it shipped under earlier names. The
-# first one installed wins, so `tt code <workspace>` works without --theme on a
-# stock install and on older builds.
-_DEFAULT_THEME_CANDIDATES = ("Dark Modern", "Dark+", "Dark (Visual Studio)")
-
-
-def _default_vscode_theme(installed_themes: set[str] | None = None) -> str:
+# The first installed schema candidate wins.
+def _default_vscode_theme(
+    installed_themes: set[str] | None = None,
+    schema: WorkspaceSchema | None = None,
+) -> str:
     """The theme to write when the caller did not name one.
 
     Returns the first installed candidate. Falls back to the first name even if
@@ -2151,120 +2195,159 @@ def _default_vscode_theme(installed_themes: set[str] | None = None) -> str:
     installed = (
         _installed_vscode_themes() if installed_themes is None else installed_themes
     )
-    for candidate in _DEFAULT_THEME_CANDIDATES:
+    candidates = (schema or _schema()).default_themes
+    for candidate in candidates:
         if candidate in installed:
             return candidate
-    return _DEFAULT_THEME_CANDIDATES[0]
-
-
-def _write_claude_local(workspace: Path, repos: list[Path]) -> Path:
-    """Write the agent-context half of the overlay, preserving hand-edits.
-
-    `AGENTS.md` and the workspaces/overlay skill both describe the overlay as a
-    pair: a `.code-workspace` and a `CLAUDE.local.md`. Only the former was ever
-    generated.
-
-    Everything below a `## Local context` heading is treated as the human's, and
-    is carried across regenerations. The generated header above it is rewritten
-    each time so the repo list stays true.
-    """
-    path = workspace / "CLAUDE.local.md"
-    track = ""
-    parts = workspace.resolve().parts
-    for index, part in enumerate(parts):
-        if part in TRACKS and index and parts[index - 1] == "code":
-            track = part
-            break
-
-    names = [repo.name for repo in repos]
-    listing = " · ".join(names) if names else "(no repos yet)"
-    scheme = "~/code/<track>/<domain>/<workspace>.<born>/<repo>"
-    track_line = (
-        f"Workspace under the **{track}** track, in the code-org scheme (`{scheme}`)."
-        if track
-        else f"Workspace in the code-org scheme (`{scheme}`)."
-    )
-
-    header = "\n".join([
-        f"# Workspace: {workspace.name}",
-        "",
-        "<!-- generated-by-tt-overlay -->",
-        "",
-        track_line,
-        "",
-        f"## Repos ({len(names)})",
-        "",
-        listing,
-        "",
-        "## Notes",
-        "- This overlay is generated by `tt` — safe to regenerate with `tt code`.",
-        "- The workspace root is the first folder in the `.code-workspace`.",
-        "- `tt ls` shows this workspace; whole-workspace worktrees live in `.wt/`.",
-        "",
-    ])
-
-    preserved = ""
-    if path.exists():
-        try:
-            existing = path.read_text()
-        except OSError:
-            existing = ""
-        marker = existing.find("## Local context")
-        if marker != -1:
-            preserved = "\n" + existing[marker:].rstrip() + "\n"
-
-    path.write_text(header + preserved)
-    return path
+    return candidates[0]
 
 
 def _prepare_code_workspace(
     workspace: Path,
-    theme: str,
+    theme: str | None,
     tags: dict[str, str],
     installed_themes: set[str] | None = None,
 ) -> Path:
-    """Create/update a canonical multi-root file while preserving preferences."""
-    installed = _installed_vscode_themes() if installed_themes is None else installed_themes
-    if theme not in installed:
-        raise SystemExit(
-            f"'{theme}' is not an installed VS Code theme. "
-            "Run 'tt code --list-themes' and choose an exact label."
+    """Compatibility wrapper around the shared workspace reconciliation seam."""
+    result = _reconcile_workspace(
+        LOCAL_HOSTNAME,
+        str(workspace),
+        fix=True,
+        theme=theme,
+        tags=tags,
+        installed_themes=installed_themes,
+    )
+    return Path(result.workspace_file)
+
+
+def _reconcile_workspace(
+    hostname: str,
+    workspace: str,
+    *,
+    fix: bool,
+    theme: str | None = None,
+    tags: dict[str, str] | None = None,
+    installed_themes: set[str] | None = None,
+    seed_repos: tuple[str, ...] = (),
+    schema: WorkspaceSchema | None = None,
+):
+    loaded_schema = schema or _schema()
+    installed = (
+        _installed_vscode_themes()
+        if installed_themes is None
+        else installed_themes
+    )
+    try:
+        result = reconcile_workspace(
+            hostname,
+            workspace,
+            fix=fix,
+            theme=theme,
+            tags=tags,
+            installed_themes=installed,
+            default_theme=_default_vscode_theme(installed, loaded_schema),
+            seed_repos=seed_repos,
+            schema=loaded_schema,
         )
+    except (WorkspaceOverlayError, WorkspaceSchemaError) as exc:
+        raise SystemExit(str(exc)) from exc
+    if fix and not result.valid:
+        raise SystemExit("; ".join(result.issues))
+    return result
 
-    repos = sorted(
-        child for child in workspace.iterdir()
-        if child.is_dir() and not child.name.startswith(".")
-        and (child / ".git").exists()
-    )
-    unknown = sorted(set(tags) - {repo.name for repo in repos})
-    if unknown:
-        raise SystemExit(f"--tag names unknown workspace repo(s): {', '.join(unknown)}")
 
-    workspace_file = (
-        _find_code_workspace(workspace)
-        or workspace / f"{_workspace_slug(workspace)}.code-workspace"
-    )
-    data = {}
-    if workspace_file.exists():
+def _workspace_root_from_text(path: str) -> str | None:
+    match = _schema().match_workspace(str(Path(path).expanduser()))
+    return match.root if match else None
+
+
+def _registered_local_workspaces(*, refresh: bool) -> list[str]:
+    """Return canonical workspaces attached to registered local surfaces."""
+    if refresh:
+        from .vscode import VSCodeDiscoveryError
         try:
-            loaded = json.loads(workspace_file.read_text())
-        except (OSError, ValueError) as exc:
-            raise SystemExit(f"Cannot read workspace file {workspace_file}: {exc}") from exc
-        if isinstance(loaded, dict):
-            data = loaded
+            _refresh_vscode_registry()
+        except VSCodeDiscoveryError as exc:
+            print(
+                f"Warning: live VS Code refresh failed; checking the existing registry: {exc}",
+                file=sys.stderr,
+            )
 
-    folders = [{"name": workspace.name, "path": "."}]
-    for repo in repos:
-        name = repo.name
-        if repo.name in tags:
-            name = f"{name}-{tags[repo.name]}"
-        folders.append({"name": name, "path": repo.name})
-    data["folders"] = folders
-    settings = data.setdefault("settings", {})
-    settings["workbench.colorTheme"] = theme
-    workspace_file.write_text(json.dumps(data, indent=2) + "\n")
-    _write_claude_local(workspace, repos)
-    return workspace_file
+    from . import registry
+    paths = set()
+    for node in registry.load().get("nodes", {}).values():
+        iterm = node.get("iterm") or {}
+        if iterm.get("cwd"):
+            paths.add(iterm["cwd"])
+        for window in (node.get("vscode") or {}).get("windows", []):
+            if not window.get("remote") and window.get("path"):
+                paths.add(window["path"])
+    return sorted(filter(None, (_workspace_root_from_text(path) for path in paths)))
+
+
+def _discovered_workspaces(hostname: str, config: dict) -> list[str]:
+    roots = {
+        match.root
+        for repo in list_repos(hostname, config=config)
+        if (match := _schema().match_workspace(repo["path"]))
+    }
+    if hostname == LOCAL_HOSTNAME:
+        roots.update(_registered_local_workspaces(refresh=False))
+    return sorted(roots)
+
+
+def cmd_workspaces(args, config):
+    """Audit or repair workspace overlays through the shared reconciler."""
+    action = getattr(args, "action", "check")
+    if action != "check":
+        raise SystemExit("Usage: tt workspaces check [--fix] [--registered]")
+
+    alias, hostname = resolve_host(config)
+    registered = getattr(args, "registered", False)
+    fix = getattr(args, "fix", False)
+    if registered:
+        if hostname != LOCAL_HOSTNAME:
+            raise SystemExit("--registered checks local iTerm and VS Code surfaces only")
+        workspaces = _registered_local_workspaces(refresh=True)
+    else:
+        workspaces = _discovered_workspaces(hostname, config)
+
+    if not workspaces:
+        scope = "registered surfaces" if registered else f"host {alias}"
+        print(f"No canonical workspaces found for {scope}.")
+        return
+
+    checked = fixed = failures = 0
+    for workspace in workspaces:
+        checked += 1
+        try:
+            result = _reconcile_workspace(hostname, workspace, fix=fix)
+        except SystemExit as exc:
+            failures += 1
+            print(f"ERROR {workspace}")
+            print(f"  {exc}")
+            continue
+
+        if result.issues:
+            status = "FIXED" if fix and result.valid else "NEEDS-FIX"
+            if not result.valid:
+                failures += 1
+            if result.changed:
+                fixed += 1
+            print(f"{status} {result.workspace_file}")
+            for issue in result.issues:
+                print(f"  {issue}")
+        else:
+            print(f"OK {result.workspace_file}")
+
+    summary = f"Checked {checked} workspace(s)"
+    if fix:
+        summary += f"; repaired {fixed}"
+    if failures:
+        summary += f"; {failures} unresolved"
+    print(summary)
+    if failures:
+        raise SystemExit(1)
 
 
 def cmd_report(args, config):
@@ -2287,21 +2370,28 @@ def cmd_ecosystem_clone(args, config):
     Workspace: <track>/<domain>/ecosystem.<born>/  (one repo dir per repo).
     """
     alias, hostname = resolve_host(config)
+    schema = _schema()
     owner, domain = args.owner, args.domain
-    track = args.track if args.track in TRACKS else "side"
+    track = args.track if args.track in schema.tracks else schema.tracks[-1]
     prefix = args.prefix or domain
     print(f"Discovering {owner}/{prefix}* …")
     names = discover_owner_repos(owner, prefix)
     if not names:
         raise SystemExit(f"No repos matching {prefix}* under {owner}.")
-    born = _current_quarter()
+    born = _current_quarter(schema)
     home = get_remote_home(hostname)
-    ws_abs = f"{home}/code/{track}/{domain}/ecosystem.{born}"
+    ws_abs = str(PurePosixPath(home) / schema.workspace_relative(
+        track, domain, "ecosystem", born,
+    ))
     urls = {n: f"https://github.com/{owner}/{n}.git" for n in names}
     print(f"Cloning {len(names)} repo(s) into {alias}:{ws_abs} …")
     res = clone_repos(hostname, ws_abs, urls)
     ok = sum(1 for _, s in res if s in ("ok", "remote", "skip"))
-    print(f"  {ok}/{len(res)} present.  workspace: {track}/{domain}/ecosystem.{born}")
+    overlay = _reconcile_workspace(hostname, ws_abs, fix=True)
+    match = schema.match_workspace(ws_abs)
+    label = match.workspace_born if match else PurePosixPath(ws_abs).name
+    print(f"  {ok}/{len(res)} present.  workspace: {track}/{domain}/{label}")
+    print(f"  overlay: {overlay.workspace_file}")
     if hostname == LOCAL_HOSTNAME:
         _emit_cd(ws_abs)
 
@@ -2331,6 +2421,7 @@ def cmd_mirror(args, config):
     tgt_abs = f"{tgt_home}/{rel}"
     print(f"Mirroring {len(remotes)} repo(s): {src_alias}:{label} → {target}:{rel}")
     clone_repos(target_host, tgt_abs, remotes)
+    _reconcile_workspace(target_host, tgt_abs, fix=True)
     print(f"  done → {target}:{tgt_abs}")
 
 
@@ -2353,7 +2444,7 @@ def cmd_spawn(args, config):
     print(f"  attach: tt {session}")
 
 
-SUBCOMMANDS = {"ls", "kill", "new", "new-project", "retire", "wt", "iterm", "tmux", "code", "repos", "inv",
+SUBCOMMANDS = {"ls", "kill", "new", "new-project", "retire", "workspaces", "wt", "iterm", "tmux", "code", "repos", "inv",
                "report", "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
                "default", "add-host", "profile", "theme",
                # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task/name' work directly
@@ -2441,6 +2532,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt inv [-t TRACK] [-d DOMAIN] [--expand]")
         print("  tt new-project <track>.<domain>.<workspace>")
         print("  tt retire <workspace> --yes")
+        print("  tt workspaces check [--fix] [--registered]")
         print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
         print("  tt wt fanout <N> <prompt…>")
         print("  tt repos [--all]")
@@ -2577,6 +2669,13 @@ def main(argv: list[str] | None = None) -> int:
         rp.add_argument("workspace", nargs="?", default=None)
         rp.add_argument("--yes", action="store_true")
         cmd_retire(rp.parse_args(argv[1:]), config)
+
+    elif cmd == "workspaces":
+        wsp = argparse.ArgumentParser(prog="tt workspaces", add_help=False)
+        wsp.add_argument("action", nargs="?", default="check")
+        wsp.add_argument("--fix", action="store_true")
+        wsp.add_argument("--registered", action="store_true")
+        cmd_workspaces(wsp.parse_args(argv[1:]), config)
 
     elif cmd == "wt":
         wp = argparse.ArgumentParser(prog="tt wt", add_help=False)

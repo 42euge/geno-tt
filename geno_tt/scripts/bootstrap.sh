@@ -18,6 +18,13 @@ state_dir="${HOME}/.geno/tt"
 log_file="${state_dir}/bootstrap.log"
 mkdir -p "${state_dir}"
 
+# Seed the editable workspace schema once. User changes are never overwritten.
+workspace_schema_src="${plugin_root}/geno_tt/workspace-schema.yaml"
+workspace_schema_dst="${state_dir}/workspace-schema.yaml"
+if [[ -f "${workspace_schema_src}" && ! -f "${workspace_schema_dst}" ]]; then
+  cp "${workspace_schema_src}" "${workspace_schema_dst}" 2>>"${log_file}" || true
+fi
+
 # 1. Install the `tt` CLI if absent.
 if ! command -v tt >/dev/null 2>&1; then
   if [[ -f "${plugin_root}/pyproject.toml" ]]; then
