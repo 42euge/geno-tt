@@ -1,7 +1,8 @@
 ---
 name: geno-tt-worktrees-rm
 description: >-
-  Remove a whole-workspace worktree (git worktree remove each repo + drop the dir).
+  Use when removing a named whole-workspace worktree from every repository and
+  deleting its shared directory.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
@@ -11,7 +12,8 @@ metadata:
 # tt worktrees/rm
 
 ```
-tt wt rm <name> [-w WORKSPACE] [-H <host>]
+tt wt rm <name>
+tt -H <host> wt -w WORKSPACE rm <name>
 ```
 
 Cleanly tears down the worktree across every repo, then deletes the `.wt/<name>/` dir.

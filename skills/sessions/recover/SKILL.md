@@ -1,7 +1,8 @@
 ---
 name: geno-tt-sessions-recover
 description: >-
-  Reattach to a live remote session from your local session directories.
+  Use when recovering a live tmux session from geno-tt's local session-state
+  directories.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

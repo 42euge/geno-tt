@@ -1,7 +1,8 @@
 ---
 name: geno-tt-sessions-kill
 description: >-
-  Kill remote tmux session(s) by ID or by folder (with confirmation).
+  Use when killing one tmux session by ID or confirmed groups of sessions by
+  folder.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

@@ -24,9 +24,19 @@ def test_frontmatter_valid():
 
 
 def test_name_mirrors_path():
-    # leaf name ends with -<leaf-dir>; every skill is geno-tt-<category>-<name>
+    # The required umbrella is exactly geno-tt; focused skills mirror their path.
     for d in _skill_dirs():
         text = (d / "SKILL.md").read_text()
         name = yaml.safe_load(text[3:text.index("---", 3)])["name"]
+        if d == SKILLS / "geno-tt":
+            assert name == "geno-tt"
+            continue
         assert name.startswith("geno-tt-"), f"{d}: name {name!r} not geno-tt-*"
         assert name.endswith(f"-{d.name}"), f"{d}: name {name!r} should end -{d.name}"
+
+
+def test_root_skill_links_to_umbrella():
+    root_skill = REPO / "SKILL.md"
+    umbrella = SKILLS / "geno-tt" / "SKILL.md"
+    assert root_skill.is_symlink()
+    assert root_skill.resolve() == umbrella.resolve()

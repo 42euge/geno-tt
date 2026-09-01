@@ -1,7 +1,8 @@
 ---
 name: geno-tt-iterm-ls
 description: >-
-  List every iTerm2 window, tab, and session (tty, name, job, cwd) via the Python API.
+  Use when inspecting every live iTerm2 window, tab, pane, tty, job, and working
+  directory through the Python API.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

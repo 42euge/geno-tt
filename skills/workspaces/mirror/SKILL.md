@@ -1,7 +1,8 @@
 ---
 name: geno-tt-workspaces-mirror
 description: >-
-  Replicate a workspace's repos onto another configured host.
+  Use when replicating every repository in a workspace onto another configured
+  host.
 allowed-tools: "Bash(tt *) Bash(git *)"
 metadata:
   author: 42euge

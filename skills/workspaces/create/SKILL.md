@@ -1,7 +1,8 @@
 ---
 name: geno-tt-workspaces-create
 description: >-
-  Scaffold a new workspace (and optional first repo) in the code-org scheme, then cd in.
+  Use when scaffolding a new born-stamped workspace and optional first repository
+  in the code-org layout.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

@@ -1,7 +1,7 @@
 ---
 name: geno-tt-sessions-attach
 description: >-
-  Attach to a remote tmux session by numeric ID, folder name, or alpha ID.
+  Use when attaching to a tmux session by numeric ID, folder name, or alpha ID.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

@@ -1,7 +1,8 @@
 ---
 name: geno-tt-iterm-tab
 description: >-
-  Add a dot-named, sticky-titled tab to the current window — the orchestrator's fan-out primitive.
+  Use when adding a sticky dot-named tab to the current iTerm2 window, optionally
+  launching Claude or another command in it.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

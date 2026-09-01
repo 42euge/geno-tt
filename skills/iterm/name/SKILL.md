@@ -1,7 +1,8 @@
 ---
 name: geno-tt-iterm-name
 description: >-
-  Set a dot-notation name on an iTerm2 session (by tty, or 'sel' for the current one).
+  Use when assigning a dot-notation name to the selected iTerm2 session or a
+  session identified by tty.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

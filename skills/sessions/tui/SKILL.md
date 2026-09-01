@@ -1,7 +1,8 @@
 ---
 name: geno-tt-sessions-tui
 description: >-
-  Open the interactive TUI session browser.
+  Use when browsing and managing sessions through geno-tt's interactive Textual
+  interface.
 allowed-tools: "Bash(tt *) Bash(python3 -m geno_tt *)"
 metadata:
   author: 42euge

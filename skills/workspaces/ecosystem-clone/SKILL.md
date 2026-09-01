@@ -1,8 +1,9 @@
 ---
 name: geno-tt-workspaces-ecosystem-clone
 description: >-
-  Clone a whole GitHub/GitLab org or group of repos into one workspace.
-allowed-tools: "Bash(tt *) Bash(git *) Bash(gh *) Read(*)"
+  Use when cloning a matching set of GitHub organization repositories into one
+  code-org workspace.
+allowed-tools: "Bash(tt *) Bash(git *) Bash(gh *)"
 metadata:
   author: 42euge
   version: "0.1.0"
@@ -11,7 +12,7 @@ metadata:
 # tt workspaces/ecosystem-clone
 
 ```
-tt ecosystem-clone <owner> <domain> [--track side] [-H <host>]
+tt -H <host> ecosystem-clone <owner> <domain> [--track side]
 ```
 
 Discovers every repo under an owner/group, scaffolds the workspace, clones them all in parallel, and strips any auth token from the stored remotes. Mirrors the geno/bluegt ecosystem setup.

@@ -1,7 +1,7 @@
 ---
 name: geno-tt-worktrees-cd
 description: >-
-  Jump into a whole-workspace worktree.
+  Use when changing the current shell into a named whole-workspace worktree.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge

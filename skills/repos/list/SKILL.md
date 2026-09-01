@@ -1,7 +1,8 @@
 ---
 name: geno-tt-repos-list
 description: >-
-  List repos discovered under the scheme on a host, with session counts and age.
+  Use when listing or searching repositories discovered on a host, including
+  their session counts and access age.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
@@ -11,10 +12,11 @@ metadata:
 # tt repos/list
 
 ```
-tt repos [--all | -d DOMAIN | -s TERM | -i]
+tt repos [--all | GROUP | -g GROUP | -s TERM | -i]
 ```
 
-Scans the configured repo dirs. Includes interactive (`-i`) and per-domain/search filters; indices feed `new`/`code`.
+Scans the configured `repo_dirs`. Includes interactive (`-i`), group, and search
+filters; indices feed `new` and `code`.
 
 Hosts are never hardcoded — remote targets resolve from the `[hosts]` table
 in `~/.geno/tt/config.toml`. Config + state live under `~/.geno/tt/`.
