@@ -1,12 +1,12 @@
 ---
 name: geno-tt
 description: >-
-  Use when opening, resuming, or creating a TT workspace through guided user
-  selection instead of choosing a low-level tt command.
+  Use when opening, resuming, creating, or retiring a TT workspace through
+  guided user selection instead of choosing a low-level tt command.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
-  version: "0.8.0"
+  version: "0.8.1"
 ---
 
 # Open a TT workspace
@@ -26,6 +26,7 @@ Start with these choices:
 2. **Open existing work** — choose a repo, then open a terminal session or VS Code.
 3. **Create a workspace** — scaffold a new workspace and its first repo.
 4. **Open a worktree** — enter an existing whole-workspace worktree.
+5. **Retire a workspace** — move a confirmed workspace into the graveyard.
 
 If the user's request already identifies one intent, begin at the next
 unresolved selection instead of asking again.
@@ -53,11 +54,18 @@ session. For worktrees, first select a workspace from
 - Create a workspace: collect `<track>.<domain>.<workspace>[.<repo>]`, then run
   `tt -H <host> new-project <spec>`
 - Enter a local worktree: `tt -H <host> wt -w <workspace> cd <name>`
+- Retire a workspace: resolve the exact workspace with
+  `tt -H <host> inv --expand`, show the user what will move, and ask for
+  explicit confirmation. Only then run
+  `tt -H <host> retire <workspace> --yes`.
 
 After creating a workspace, ask whether to stop there, start a terminal
 session, or open the new repo in VS Code. Reuse the selected host and resolve
 the new repo ID with `tt -H <host> repos --all` when needed.
 
-Do not run destructive or administrative TT actions from this entry point.
-Hosts come from `~/.geno/tt/config.toml`; never hard-code them. User-facing CLI
-details remain in `docs/`.
+Retirement moves the workspace to
+`~/code/graveyard/<track>/<domain>/<workspace>.<born>` and refuses to overwrite
+an existing entry. Never infer confirmation, and report the destination printed
+by TT. Do not run other destructive or administrative TT actions from this
+entry point. Hosts come from `~/.geno/tt/config.toml`; never hard-code them.
+User-facing CLI details remain in `docs/`.

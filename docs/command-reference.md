@@ -104,6 +104,17 @@ the initial repository directory uses the workspace name. Valid tracks are
 `crit`, `explore`, `chore`, and `side`.
 
 ```text
+tt retire [<workspace>] --yes
+```
+
+Move a canonical workspace out of the active tree and into
+`~/code/graveyard/<track>/<domain>/<workspace>.<born>`. When `<workspace>` is
+omitted, a local session may use the workspace containing its current directory.
+Use global `-H HOST` for a configured remote host. The command requires `--yes`,
+refuses to overwrite an existing graveyard entry, and refreshes the active
+workspace inventory after moving it.
+
+```text
 tt report [--expand]
 ```
 

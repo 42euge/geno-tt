@@ -7,10 +7,10 @@ import os
 import re
 import sys
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .config import load_config, resolve_host, SESSIONS_DIR
-from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_repos, list_worktrees, add_worktree, remove_worktree, discover_owner_repos, clone_repos, workspace_repo_remotes, spawn_layout, LOCAL_HOSTNAME
+from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_repos, list_worktrees, add_worktree, remove_worktree, discover_owner_repos, clone_repos, workspace_repo_remotes, move_workspace, spawn_layout, LOCAL_HOSTNAME
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
 from .iterm2 import is_iterm2, should_use_control_mode, should_open_new_tab, emit_pre_connect_sequences
@@ -737,6 +737,23 @@ def cmd_scaffold(args, config):
 _WS_RE = re.compile(r"(.*/code/(?:" + "|".join(TRACKS) + r")/[^/]+/[^/]+\.\d{4}\.q[1-4])(?:/|$)")
 
 
+def _graveyard_destination(home: str, workspace: str) -> str:
+    """Return the reserved graveyard path for a canonical TT workspace."""
+    code_root = PurePosixPath(home) / "code"
+    source = PurePosixPath(workspace)
+    try:
+        relative = source.relative_to(code_root)
+    except ValueError as exc:
+        raise SystemExit(f"Workspace is outside the TT code root: {workspace}") from exc
+    if (
+        len(relative.parts) != 3
+        or relative.parts[0] not in TRACKS
+        or _BORN_RE.fullmatch(relative.parts[2]) is None
+    ):
+        raise SystemExit(f"Not a canonical TT workspace: {workspace}")
+    return str(code_root / "graveyard" / relative)
+
+
 def _detect_workspace() -> str | None:
     """If cwd is inside a scheme workspace, return the workspace container path.
 
@@ -780,6 +797,41 @@ def _resolve_workspace(hostname, target, config):
         raise SystemExit(f"'{target}' is ambiguous: {opts}. Use the full <name>.<born>.")
     ws_abs, label = next(iter(seen.items()))
     return ws_abs, label
+
+
+def cmd_retire(args, config):
+    """Move a local or remote workspace out of active inventory."""
+    alias, hostname = resolve_host(config)
+    target = getattr(args, "workspace", None)
+    local_workspace = _detect_workspace()
+
+    if target is None and local_workspace and not config.get("_host_explicit"):
+        hostname = LOCAL_HOSTNAME
+        alias = next(
+            (name for name, host in config.get("hosts", {}).items() if host == hostname),
+            "local",
+        )
+        workspace = local_workspace
+        label = Path(workspace).name
+    elif target is None:
+        raise SystemExit(
+            "Name the workspace: tt [-H host] retire <workspace> --yes\n"
+            "  (or run from inside a local workspace)."
+        )
+    else:
+        workspace, label = _resolve_workspace(hostname, target, config)
+
+    destination = _graveyard_destination(get_remote_home(hostname), workspace)
+    if not getattr(args, "yes", False):
+        raise SystemExit(
+            f"Retiring {alias}:{label} moves it to {destination}. "
+            "Re-run with --yes after confirming the workspace is finished."
+        )
+
+    move_workspace(hostname, workspace, destination)
+    list_repos(hostname, config=config)
+    print(f"Retired {alias}:{label}")
+    print(f"  {destination}")
 
 
 def cmd_wt(args, config):
@@ -2304,7 +2356,7 @@ def cmd_spawn(args, config):
     print(f"  attach: tt {session}")
 
 
-SUBCOMMANDS = {"ls", "kill", "new", "new-project", "wt", "iterm", "tmux", "code", "repos", "inv",
+SUBCOMMANDS = {"ls", "kill", "new", "new-project", "retire", "wt", "iterm", "tmux", "code", "repos", "inv",
                "report", "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
                "default", "add-host", "profile", "theme",
                # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task/name' work directly
@@ -2320,6 +2372,7 @@ def main(argv: list[str] | None = None) -> int:
         if len(argv) < 2:
             raise SystemExit("Usage: tt -H <host_alias> <command> ...")
         config["default_host"] = argv[1]
+        config["_host_explicit"] = True
         argv = argv[2:]
 
     # iTerm2 flags: -t/--tab, --cc, --no-cc
@@ -2390,6 +2443,7 @@ def main(argv: list[str] | None = None) -> int:
         print("workspace:")
         print("  tt inv [-t TRACK] [-d DOMAIN] [--expand]")
         print("  tt new-project <track>.<domain>.<workspace>")
+        print("  tt retire <workspace> --yes")
         print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
         print("  tt wt fanout <N> <prompt…>")
         print("  tt repos [--all]")
@@ -2520,6 +2574,12 @@ def main(argv: list[str] | None = None) -> int:
         if len(argv) < 2:
             raise SystemExit("Usage: tt new-project <track>.<domain>.<workspace>")
         cmd_scaffold(argparse.Namespace(spec=argv[1]), config)
+
+    elif cmd == "retire":
+        rp = argparse.ArgumentParser(prog="tt retire", add_help=False)
+        rp.add_argument("workspace", nargs="?", default=None)
+        rp.add_argument("--yes", action="store_true")
+        cmd_retire(rp.parse_args(argv[1:]), config)
 
     elif cmd == "wt":
         wp = argparse.ArgumentParser(prog="tt wt", add_help=False)

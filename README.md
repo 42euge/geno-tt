@@ -11,7 +11,7 @@ hosts.
 
 Its main jobs are:
 
-- inventory and create workspaces in the code-org layout;
+- inventory, create, and retire workspaces in the code-org layout;
 - create the same named Git worktree across every repository in a workspace;
 - open a workspace as one VS Code window and register live editor windows;
 - organize iTerm2 tabs using dot-notation names; and
@@ -102,6 +102,7 @@ Common workflows:
 tt inv [-t TRACK] [-d DOMAIN] [--expand]
 tt repos [--all | -g GROUP | -s TERM | -i]
 tt new-project <track>.<domain>.<workspace>[.<repo>]
+tt retire [<workspace>] --yes
 tt code <repo|index|canonical-path> [--theme THEME] [--tag repo=tag]
 tt code --list-open
 tt code --sync
@@ -140,9 +141,9 @@ Global flags such as `-H`, `--tab`, and `--cc` go before the command. See the
 
 Agent-facing TT work uses the single guided [`$geno-tt`](skills/geno-tt/SKILL.md)
 skill. It asks the user whether to continue a session, open existing work,
-create a workspace, or enter a worktree, then translates that selection into
-the appropriate CLI command. The docs above remain the user-facing source of
-truth for lower-level commands.
+create or retire a workspace, or enter a worktree, then translates that
+selection into the appropriate CLI command. The docs above remain the
+user-facing source of truth for lower-level commands.
 
 ## Development
 

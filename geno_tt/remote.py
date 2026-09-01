@@ -302,6 +302,47 @@ def _ssh_run(hostname: str, script: str, check: bool = False):
     )
 
 
+def move_workspace(hostname: str, source: str, destination: str) -> None:
+    """Move a workspace into its graveyard path without overwriting anything."""
+    if _is_local(hostname):
+        source_path = Path(source)
+        destination_path = Path(destination)
+        if not source_path.is_dir():
+            raise RuntimeError(f"Workspace does not exist: {source}")
+        if destination_path.exists():
+            raise RuntimeError(f"Graveyard destination already exists: {destination}")
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            source_path.rename(destination_path)
+        except OSError as exc:
+            raise RuntimeError(f"Could not retire workspace: {exc}") from exc
+        return
+
+    import shlex
+
+    quoted_source = shlex.quote(source)
+    quoted_destination = shlex.quote(destination)
+    quoted_parent = shlex.quote(str(Path(destination).parent))
+    script = "\n".join([
+        "set -eu",
+        (
+            f"[ -d {quoted_source} ] || {{ "
+            f"echo {shlex.quote(f'Workspace does not exist: {source}')} >&2; exit 2; }}"
+        ),
+        (
+            f"[ ! -e {quoted_destination} ] || {{ "
+            f"echo {shlex.quote(f'Graveyard destination already exists: {destination}')} "
+            ">&2; exit 3; }"
+        ),
+        f"mkdir -p {quoted_parent}",
+        f"mv {quoted_source} {quoted_destination}",
+    ])
+    result = _ssh_run(hostname, script)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(detail or f"Could not retire workspace on {hostname}.")
+
+
 def list_workspace_repos(hostname: str, ws_abs: str) -> list[str]:
     """Return git-repo subdir names directly inside a workspace (local or remote).
 
@@ -455,14 +496,14 @@ def list_repos(hostname: str, config: dict | None = None, write_cache: bool = Tr
         parts = line.split(" ", 1)
         if len(parts) == 2 and parts[0].isdigit():
             epoch, path = int(parts[0]), parts[1].rstrip("/")
-            if path not in seen:
+            if path not in seen and not _is_graveyard_path(path):
                 seen.add(path)
                 from datetime import datetime, timezone
                 ts = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
                 repos.append({"path": path, "last_accessed": ts})
         else:
             path = line.strip().rstrip("/")
-            if path and path not in seen:
+            if path and path not in seen and not _is_graveyard_path(path):
                 seen.add(path)
                 repos.append({"path": path, "last_accessed": "unknown"})
 
@@ -483,7 +524,7 @@ def _list_local_repos(repo_dirs: list[str], hostname: str, write_cache: bool) ->
     for pattern in repo_dirs:
         for path in sorted(_glob.glob(os.path.expanduser(pattern))):
             path = path.rstrip("/")
-            if path not in seen:
+            if path not in seen and not _is_graveyard_path(path):
                 seen.add(path)
                 try:
                     ts = datetime.fromtimestamp(os.stat(path).st_atime, tz=timezone.utc).isoformat()
@@ -496,6 +537,12 @@ def _list_local_repos(repo_dirs: list[str], hostname: str, write_cache: bool) ->
         with open(_repos_cache_path(hostname), "w") as f:
             json.dump(repos, f)
     return repos
+
+
+def _is_graveyard_path(path: str) -> bool:
+    """Return whether a path lives below the reserved ~/code/graveyard tree."""
+    normalized = path.rstrip("/") + "/"
+    return "/code/graveyard/" in normalized
 
 
 def read_repos_cache(hostname: str) -> list[dict] | None:
