@@ -138,9 +138,11 @@ Global flags such as `-H`, `--tab`, and `--cc` go before the command. See the
 - [Troubleshooting](docs/troubleshooting.md) — common setup and runtime failures
 - [AGENTS.md](AGENTS.md) — architecture and contributor conventions
 
-Each agent-facing workflow also has a focused guide under
-[`skills/`](skills/). Those files describe how an agent should safely apply a
-specific `tt` capability; the docs above are the user-facing source of truth.
+Agent-facing TT work uses the single guided [`$geno-tt`](skills/geno-tt/SKILL.md)
+skill. It asks the user whether to continue a session, open existing work,
+create a workspace, or enter a worktree, then translates that selection into
+the appropriate CLI command. The docs above remain the user-facing source of
+truth for lower-level commands.
 
 ## Development
 

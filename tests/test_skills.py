@@ -10,8 +10,10 @@ def _skill_dirs():
     return [p.parent for p in SKILLS.rglob("SKILL.md")]
 
 
-def test_at_least_one_skill():
-    assert len(_skill_dirs()) >= 1
+def test_single_guided_skill():
+    dirs = _skill_dirs()
+    assert len(dirs) == 1
+    assert dirs[0] == SKILLS / "geno-tt"
 
 
 def test_frontmatter_valid():
@@ -24,7 +26,7 @@ def test_frontmatter_valid():
 
 
 def test_name_mirrors_path():
-    # The required umbrella is exactly geno-tt; focused skills mirror their path.
+    # The single visible entry point is the required umbrella skill.
     for d in _skill_dirs():
         text = (d / "SKILL.md").read_text()
         name = yaml.safe_load(text[3:text.index("---", 3)])["name"]
