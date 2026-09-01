@@ -1,53 +1,63 @@
 ---
 name: geno-tt
 description: >-
-  Use when creating or navigating code workspaces, managing whole-workspace Git
-  worktrees, organizing iTerm2 or VS Code windows, or operating tmux sessions
-  across configured hosts with the tt CLI.
-allowed-tools: "Bash(tt *) Bash(python3 -m geno_tt *)"
+  Use when opening, resuming, or creating a TT workspace through guided user
+  selection instead of choosing a low-level tt command.
+allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
   version: "0.8.0"
 ---
 
-# geno-tt — terminal, workspace, and session manager
+# Open a TT workspace
 
-The `tt` CLI manages the code-org scheme
-(`~/code/<track>/<domain>/<workspace>.<born>/<repo>`), whole-workspace Git
-worktrees, local iTerm2 and VS Code windows, and tmux sessions on hosts from
-`~/.geno/tt/config.toml`.
+This is the single agent-facing entry point for `geno-tt`. Translate the
+user's selections into the underlying `tt` CLI command.
 
-The interactive `tt` shell function provides cd-into-target and iTerm track
-tinting. It is installed by the SessionStart bootstrap; non-interactive use
-works directly through the `tt` executable.
+## Guided selection
 
-User-facing setup, command, configuration, and troubleshooting documentation
-lives under `docs/`.
+When the user has not already supplied a choice, use the client's user-selection
+UI. If no selection UI is available, ask one concise numbered question and wait
+for the answer. Ask only for information the chosen path needs.
 
-## Skills by category
+Start with these choices:
 
-| Category | Skills |
-| --- | --- |
-| `sessions/` | `ls` · `attach` · `kill` · `clean` · `recover` · `tui` · `spawn` |
-| `workspaces/` | `inventory` · `create` · `ecosystem-clone` · `overlay` · `mirror` · `report` |
-| `worktrees/` | `new` · `ls` · `cd` · `rm` · `fanout` |
-| `hosts/` | `list` · `add` · `default` |
-| `repos/` | `list` · `code` |
-| `appearance/` | `theme` · `profile` |
-| `iterm/` | `ls` · `group` · `sort` · `name` · `smart-name` · `new-task` · `tab` · `resume` · `fork` |
+1. **Continue a session** — attach to work that is already running.
+2. **Open existing work** — choose a repo, then open a terminal session or VS Code.
+3. **Create a workspace** — scaffold a new workspace and its first repo.
+4. **Open a worktree** — enter an existing whole-workspace worktree.
 
-## CLI map
+If the user's request already identifies one intent, begin at the next
+unresolved selection instead of asking again.
 
-- `tt inv [-t TRACK] [-d DOMAIN] [--expand]` — workspace inventory
-- `tt new-project <track>.<domain>.<workspace>[.<repo>]` — scaffold a workspace
-- `tt wt new|ls|cd|rm <name>` — whole-workspace worktrees; for a named
-  workspace use `tt wt -w WS <action>`
-- `tt ls` — local iTerm2 inventory
-- `tt tmux ls|<target>|kill|clean|recover|tui|spawn` — tmux sessions
-- `tt repos | code | hosts | add-host | default | theme | profile`
-- `tt code --list-open|--sync` — inspect or synchronize live VS Code windows
-- `tt iterm ls|group|sort|name|window|reg|focus|resume|fork|new-task|tab` —
-  iTerm2 Python API orchestration
+## Resolve the target
 
-Hosts are never hard-coded. Remote targets resolve through `[hosts]` in
-`~/.geno/tt/config.toml`; config and local state live under `~/.geno/tt/`.
+Run `tt hosts` first when the host is unknown. Automatically use the only
+configured host; otherwise let the user select one. Pass it as `tt -H <host>`
+to every command in the flow.
+
+For existing work, run `tt -H <host> repos --all`, present the matching repos,
+and let the user select one. Keep the numeric repo ID because `tt new` and
+`tt code` both accept it.
+
+For sessions, run `tt -H <host> tmux ls`, then let the user select a live
+session. For worktrees, first select a workspace from
+`tt -H <host> inv --expand`, then list its worktrees with
+`tt -H <host> wt -w <workspace> ls`.
+
+## Execute the selection
+
+- Continue a session: `tt -H <host> tmux <session-id>`
+- Existing repo in a terminal session: `tt -H <host> new <repo-id>`
+- Existing repo in VS Code: `tt -H <host> code <repo-id>`
+- Create a workspace: collect `<track>.<domain>.<workspace>[.<repo>]`, then run
+  `tt -H <host> new-project <spec>`
+- Enter a local worktree: `tt -H <host> wt -w <workspace> cd <name>`
+
+After creating a workspace, ask whether to stop there, start a terminal
+session, or open the new repo in VS Code. Reuse the selected host and resolve
+the new repo ID with `tt -H <host> repos --all` when needed.
+
+Do not run destructive or administrative TT actions from this entry point.
+Hosts come from `~/.geno/tt/config.toml`; never hard-code them. User-facing CLI
+details remain in `docs/`.
