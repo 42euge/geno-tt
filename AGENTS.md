@@ -83,5 +83,3 @@ git diff --check
 For documentation-only changes, also verify that relative Markdown links
 resolve and that `mkdocs build --strict` succeeds when the docs extra is
 installed.
-
-Known bugs and planned work are tracked in [TASKS.md](TASKS.md).

@@ -137,7 +137,6 @@ Global flags such as `-H`, `--tab`, and `--cc` go before the command. See the
 - [Configuration](docs/configuration.md) — `config.toml`, discovery globs, iTerm2, and state files
 - [Troubleshooting](docs/troubleshooting.md) — common setup and runtime failures
 - [AGENTS.md](AGENTS.md) — architecture and contributor conventions
-- [TASKS.md](TASKS.md) — known bugs, planned work, and documentation debt
 
 Each agent-facing workflow also has a focused guide under
 [`skills/`](skills/). Those files describe how an agent should safely apply a

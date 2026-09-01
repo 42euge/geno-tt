@@ -200,6 +200,3 @@ The session-start bootstrap is intentionally quiet. Its log is:
 ```text
 ~/.geno/tt/bootstrap.log
 ```
-
-For project status and known implementation gaps, see
-[`TASKS.md`](https://github.com/42euge/geno-tt/blob/main/TASKS.md).

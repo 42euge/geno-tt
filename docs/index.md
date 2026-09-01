@@ -35,6 +35,4 @@ extras only when those workflows are needed. Continue with
 ## Development
 
 Repository architecture and contributor constraints are in
-[`AGENTS.md`](https://github.com/42euge/geno-tt/blob/main/AGENTS.md). Known bugs
-and planned work are in
-[`TASKS.md`](https://github.com/42euge/geno-tt/blob/main/TASKS.md).
+[`AGENTS.md`](https://github.com/42euge/geno-tt/blob/main/AGENTS.md).
