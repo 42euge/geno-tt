@@ -96,6 +96,18 @@ shows the complete list, `-s` searches by name, and `-i` opens the curses picker
 Non-TTY output is plain and complete.
 
 ```text
+tt find <terms...> [--recent] [--limit N]
+```
+
+Find vaguely described work across every configured host. Matching treats
+individual words as clues and handles common word-form differences, such as
+`tester` matching `test`. Canonical repository matches are grouped under their
+workspace; legacy matches remain explicitly labeled as repositories. Results
+include host, kind, recent activity, matching repos, and canonical path. Add
+`--recent` to use activity as a stronger ranking signal, or global `-H HOST` to
+constrain the search to one host.
+
+```text
 tt new-project <track>.<domain>.<workspace>[.<repo>]
 ```
 

@@ -70,15 +70,15 @@ The canonical layout needs four wildcard levels below `~/code`:
        track/domain/workspace/repo
 ```
 
-The current built-in fallback is:
+The built-in default is:
 
 ```toml
-repo_dirs = ["~/code*/*/"]
+repo_dirs = ["~/code/*/*/*/*/", "~/code-*/*/"]
 ```
 
-That finds legacy `~/code-<color>/<repo>` checkouts but is too shallow for the
-canonical layout. Configure `repo_dirs` explicitly when using `tt inv`,
-`tt repos`, target indices, or workspace-name resolution.
+It covers the canonical and legacy layouts. Discovery verifies that every
+match has a `.git` marker, so a shallow custom glob cannot turn track, domain,
+or workspace directories into repository results.
 
 Repository caches are refreshed by inventory operations and stored under
 `~/.geno/tt/cache/`.

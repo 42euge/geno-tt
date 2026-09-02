@@ -12,6 +12,7 @@ CACHE_DIR = Path("/tmp")
 CACHE_TTL = 60  # seconds
 
 LOCAL_HOSTNAME = "localhost"
+DEFAULT_REPO_DIRS = ["~/code/*/*/*/*/", "~/code-*/*/"]
 
 
 def _is_local(hostname: str) -> bool:
@@ -503,10 +504,12 @@ def _repos_cache_path(host: str) -> Path:
 def list_repos(hostname: str, config: dict | None = None, write_cache: bool = True) -> list[dict]:
     """List directories under configured repo_dirs on a host (local or remote).
 
-    By default scans ~/code*/*/ unless repo_dirs is set in config.
+    By default scans canonical workspaces and legacy code-color directories.
+    Matches without a .git marker are ignored so workspace, domain, and track
+    directories cannot be reported as repositories.
     Returns list of dicts: {"path": str, "last_accessed": str (ISO timestamp or "unknown")}.
     """
-    repo_dirs = ["~/code*/*/"]
+    repo_dirs = DEFAULT_REPO_DIRS
     if config and "repo_dirs" in config:
         repo_dirs = config["repo_dirs"]
 
@@ -515,7 +518,15 @@ def list_repos(hostname: str, config: dict | None = None, write_cache: bool = Tr
 
     # Get paths and last-access times in one SSH call
     # stat -c '%X %n' gives epoch access-time + path on Linux
-    stat_parts = [f"stat -c '%X %n' {d} 2>/dev/null" for d in repo_dirs]
+    stat_parts = [
+        (
+            f"for repo in {pattern}; do "
+            "[ -e \"${repo%/}/.git\" ] && "
+            "stat -c '%X %n' \"${repo%/}\"; "
+            "done 2>/dev/null"
+        )
+        for pattern in repo_dirs
+    ]
     remote_cmd = "; ".join(stat_parts)
 
     result = subprocess.run(
@@ -559,7 +570,11 @@ def _list_local_repos(repo_dirs: list[str], hostname: str, write_cache: bool) ->
     for pattern in repo_dirs:
         for path in sorted(_glob.glob(os.path.expanduser(pattern))):
             path = path.rstrip("/")
-            if path not in seen and not _is_graveyard_path(path):
+            if (
+                path not in seen
+                and not _is_graveyard_path(path)
+                and (Path(path) / ".git").exists()
+            ):
                 seen.add(path)
                 try:
                     ts = datetime.fromtimestamp(os.stat(path).st_atime, tz=timezone.utc).isoformat()

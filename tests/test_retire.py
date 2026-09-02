@@ -132,6 +132,34 @@ def test_repo_discovery_ignores_graveyard_paths(tmp_path):
     assert [repo["path"] for repo in repos] == [str(active)]
 
 
+def test_repo_discovery_ignores_non_git_track_and_workspace_directories(tmp_path):
+    track = tmp_path / "code" / "crit"
+    workspace = track / "ngrt" / "radio.2026.q3"
+    repo = workspace / "ng-radio-test-rack"
+    (repo / ".git").mkdir(parents=True)
+    patterns = [
+        str(tmp_path / "code" / "*"),
+        str(tmp_path / "code" / "*" / "*" / "*" / "*"),
+    ]
+
+    repos = remote._list_local_repos(patterns, "localhost", write_cache=False)
+
+    assert [item["path"] for item in repos] == [str(repo)]
+
+
+def test_default_repo_discovery_covers_canonical_and_legacy_layouts(monkeypatch):
+    observed = []
+    monkeypatch.setattr(
+        remote,
+        "_list_local_repos",
+        lambda patterns, hostname, write_cache: observed.append(patterns) or [],
+    )
+
+    remote.list_repos("localhost", config={}, write_cache=False)
+
+    assert observed == [["~/code/*/*/*/*/", "~/code-*/*/"]]
+
+
 def test_retire_requires_explicit_confirmation(monkeypatch):
     monkeypatch.setattr(
         cli,

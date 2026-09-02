@@ -107,7 +107,7 @@ def _parse_rel(rel: str) -> dict:
         ws_seg = fields["workspace_born"]
         return {
             "track": track, "domain": domain, "workspace": workspace,
-            "born": born, "repo": repo,
+            "workspace_born": ws_seg, "born": born, "repo": repo,
             "group": track,
             "leaf": f"{domain}/{ws_seg}/{repo}",
         }
@@ -353,6 +353,142 @@ def _ws_abs_path(repo_row) -> str:
     """Absolute path of the workspace container holding a repo row."""
     # repo_row['path'] = .../code/<track>/<domain>/<ws>.<born>/<repo>
     return repo_row["path"].rsplit("/", 1)[0]
+
+
+_FIND_STOP_WORDS = {
+    "a", "an", "for", "find", "latest", "locate", "my", "project",
+    "projects", "recent", "recently", "repo", "repos", "repository",
+    "repositories", "the", "work", "workspace", "workspaces",
+}
+
+
+def _find_words(value: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", value.lower())
+
+
+def _find_word_score(clue: str, candidate: str) -> int:
+    if clue == candidate:
+        return 5
+    if min(len(clue), len(candidate)) >= 4 and (
+        clue.startswith(candidate) or candidate.startswith(clue)
+    ):
+        return 4
+    if len(clue) >= 4 and clue in candidate:
+        return 3
+    return 0
+
+
+def _find_text_score(clues: list[str], value: str) -> int:
+    words = _find_words(value)
+    return sum(
+        max((_find_word_score(clue, word) for word in words), default=0)
+        for clue in clues
+    )
+
+
+def _find_candidates(results, query: str, *, recent: bool = False) -> list[dict]:
+    """Group repo inventory into broad, ranked workspace/repo candidates."""
+    clues = [word for word in _find_words(query) if word not in _FIND_STOP_WORDS]
+    grouped: dict[tuple[str, str], dict] = {}
+
+    for alias, hostname, repo_list in results:
+        if not repo_list:
+            continue
+        for row in repo_list:
+            if row["track"]:
+                path = _ws_abs_path(row)
+                key = (alias, path)
+                target = "/".join((
+                    row["track"], row["domain"], row["workspace_born"],
+                ))
+                kind = "workspace"
+                repo = row["repo"]
+            else:
+                path = row["path"]
+                key = (alias, path)
+                target = "/".join(filter(None, (row["group"], row["leaf"])))
+                kind = "repo"
+                repo = row["leaf"]
+
+            candidate = grouped.setdefault(key, {
+                "host": alias,
+                "hostname": hostname,
+                "kind": kind,
+                "target": target,
+                "path": path,
+                "repos": [],
+                "session_count": 0,
+                "age": "",
+                "age_days": -1,
+            })
+            if repo not in candidate["repos"]:
+                candidate["repos"].append(repo)
+            candidate["session_count"] += row["session_count"]
+            age_days = row["age_days"]
+            if age_days >= 0 and (
+                candidate["age_days"] < 0 or age_days < candidate["age_days"]
+            ):
+                candidate["age_days"] = age_days
+                candidate["age"] = row["age"]
+
+    candidates = []
+    for candidate in grouped.values():
+        searchable = " ".join((
+            candidate["host"], candidate["target"], *candidate["repos"],
+        ))
+        score = _find_text_score(clues, searchable)
+        if clues and score == 0:
+            continue
+        matching_repos = [
+            repo for repo in candidate["repos"]
+            if not clues or _find_text_score(clues, repo) > 0
+        ]
+        candidate["matching_repos"] = matching_repos or candidate["repos"]
+        candidate["score"] = score
+        candidates.append(candidate)
+
+    def sort_key(candidate):
+        age = candidate["age_days"] if candidate["age_days"] >= 0 else 10**9
+        canonical = 0 if candidate["kind"] == "workspace" else 1
+        active = -candidate["session_count"]
+        if recent:
+            return (-candidate["score"], active, canonical, age, candidate["target"])
+        return (-candidate["score"], canonical, active, age, candidate["target"])
+
+    return sorted(candidates, key=sort_key)
+
+
+def cmd_find(args, config):
+    """Find vaguely described work across every configured host."""
+    if not config.get("hosts"):
+        print("No hosts configured. Use tt add-host first.")
+        return
+
+    query = " ".join(args.query)
+    all_hosts = not config.get("_host_explicit", False)
+    results = _repos_data(config, all_hosts=all_hosts)
+    candidates = _find_candidates(results, query, recent=args.recent)
+    limit = max(1, args.limit)
+
+    if not candidates:
+        scope = "all configured hosts" if all_hosts else config.get("default_host", "host")
+        print(f"No workspace or repo matches '{query}' on {scope}.")
+        return
+
+    print("host\tkind\ttarget\tactivity\tsessions\tmatching-repos\tpath")
+    for candidate in candidates[:limit]:
+        repos = ",".join(candidate["matching_repos"][:5])
+        if len(candidate["matching_repos"]) > 5:
+            repos += f",+{len(candidate['matching_repos']) - 5}"
+        print("\t".join((
+            candidate["host"],
+            candidate["kind"],
+            candidate["target"],
+            candidate["age"] or "unknown",
+            str(candidate["session_count"]),
+            repos,
+            candidate["path"],
+        )))
 
 
 def _repos_inv(results, track_filter=None, domain_filter=None, expand=False):
@@ -2444,7 +2580,7 @@ def cmd_spawn(args, config):
     print(f"  attach: tt {session}")
 
 
-SUBCOMMANDS = {"ls", "kill", "new", "new-project", "retire", "workspaces", "wt", "iterm", "tmux", "code", "repos", "inv",
+SUBCOMMANDS = {"ls", "kill", "new", "new-project", "retire", "workspaces", "wt", "iterm", "tmux", "code", "repos", "find", "inv",
                "report", "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
                "default", "add-host", "profile", "theme",
                # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task/name' work directly
@@ -2536,6 +2672,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
         print("  tt wt fanout <N> <prompt…>")
         print("  tt repos [--all]")
+        print("  tt find <terms…> [--recent] [--limit N]")
         print("  tt code <repo|workspace> [--theme THEME] [--tag repo=tag]")
         print("  tt code --sync        Register all open VS Code windows")
         print("  tt code --list-open   Refresh and show open VS Code workspaces")
@@ -2622,6 +2759,13 @@ def main(argv: list[str] | None = None) -> int:
         rp.add_argument("-s", "--search", default=None)
         rargs = rp.parse_args(argv[1:])
         cmd_repos(rargs, config)
+
+    elif cmd == "find":
+        fp = argparse.ArgumentParser(prog="tt find")
+        fp.add_argument("query", nargs="+")
+        fp.add_argument("--recent", action="store_true")
+        fp.add_argument("--limit", type=int, default=10)
+        cmd_find(fp.parse_args(argv[1:]), config)
 
     elif cmd == "inv":
         ip = argparse.ArgumentParser(prog="tt inv", add_help=False)
