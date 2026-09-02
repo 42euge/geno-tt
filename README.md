@@ -140,10 +140,13 @@ Global flags such as `-H`, `--tab`, and `--cc` go before the command. See the
 - [Troubleshooting](docs/troubleshooting.md) — common setup and runtime failures
 - [AGENTS.md](AGENTS.md) — architecture and contributor conventions
 
-Agent-facing TT work uses the single guided [`$geno-tt`](skills/geno-tt/SKILL.md)
+Agent-facing TT work starts with the guided [`$geno-tt`](skills/geno-tt/SKILL.md)
 skill. It asks the user whether to continue a session, open existing work,
 create or retire a workspace, or enter a worktree, then translates that
-selection into the appropriate CLI command. The docs above remain the
+selection into the appropriate CLI command. Before retirement, the focused
+[`$geno-tt-workspaces-check-retirement`](skills/workspaces/check-retirement/SKILL.md)
+skill can audit Git state, worktrees, active sessions and editors, and the
+graveyard destination without moving anything. The docs above remain the
 user-facing source of truth for lower-level commands.
 
 ## Development

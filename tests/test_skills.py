@@ -10,10 +10,11 @@ def _skill_dirs():
     return [p.parent for p in SKILLS.rglob("SKILL.md")]
 
 
-def test_single_guided_skill():
-    dirs = _skill_dirs()
-    assert len(dirs) == 1
-    assert dirs[0] == SKILLS / "geno-tt"
+def test_expected_skill_contracts():
+    assert set(_skill_dirs()) == {
+        SKILLS / "geno-tt",
+        SKILLS / "workspaces" / "check-retirement",
+    }
 
 
 def test_frontmatter_valid():
