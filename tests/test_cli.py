@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from geno_tt.cli import (
+    _find_candidates,
     _parse_rel,
     _parse_workspace_spec,
     _current_quarter,
@@ -19,6 +20,7 @@ from geno_tt.cli import (
     _registered_local_workspaces,
     cmd_code,
     cmd_ecosystem_clone,
+    cmd_find,
     cmd_mirror,
     cmd_scaffold,
     cmd_workspaces,
@@ -26,10 +28,167 @@ from geno_tt.cli import (
 )
 
 
+def _repo_row(
+    path,
+    *,
+    group,
+    leaf,
+    track="",
+    domain="",
+    workspace="",
+    workspace_born="",
+    repo="",
+    age="today",
+    age_days=0,
+    session_count=0,
+):
+    return {
+        "path": path,
+        "group": group,
+        "leaf": leaf,
+        "track": track,
+        "domain": domain,
+        "workspace": workspace,
+        "workspace_born": workspace_born,
+        "repo": repo,
+        "age": age,
+        "age_days": age_days,
+        "session_count": session_count,
+    }
+
+
+def test_find_groups_canonical_repos_and_matches_broad_word_forms():
+    root = "/Users/dev/code/crit/ngrt/igs-ops-stopgap.2026.q3"
+    results = [
+        ("local", "localhost", [
+            _repo_row(
+                f"{root}/ng-radio-test-rack",
+                group="crit",
+                leaf="ngrt/igs-ops-stopgap.2026.q3/ng-radio-test-rack",
+                track="crit",
+                domain="ngrt",
+                workspace="igs-ops-stopgap",
+                workspace_born="igs-ops-stopgap.2026.q3",
+                repo="ng-radio-test-rack",
+                age="2d ago",
+                age_days=2,
+            ),
+            _repo_row(
+                f"{root}/chassis-tools",
+                group="crit",
+                leaf="ngrt/igs-ops-stopgap.2026.q3/chassis-tools",
+                track="crit",
+                domain="ngrt",
+                workspace="igs-ops-stopgap",
+                workspace_born="igs-ops-stopgap.2026.q3",
+                repo="chassis-tools",
+                age="1d ago",
+                age_days=1,
+            ),
+        ]),
+        ("z2", "build.example.com", [
+            _repo_row(
+                "/home/dev/code-orange/ngnet-4508-radio-tester-sw",
+                group="code-orange",
+                leaf="ngnet-4508-radio-tester-sw",
+            ),
+        ]),
+    ]
+
+    candidates = _find_candidates(results, "find worksapce for my radio tester work")
+
+    assert [(item["host"], item["kind"], item["target"]) for item in candidates] == [
+        ("z2", "repo", "code-orange/ngnet-4508-radio-tester-sw"),
+        ("local", "workspace", "crit/ngrt/igs-ops-stopgap.2026.q3"),
+    ]
+    assert candidates[1]["matching_repos"] == ["ng-radio-test-rack"]
+    assert candidates[1]["age"] == "1d ago"
+
+
+def test_find_recent_generic_work_ranks_activity_across_hosts():
+    results = [
+        ("local", "localhost", [
+            _repo_row(
+                "/Users/dev/code-orange/older",
+                group="code-orange",
+                leaf="older",
+                age="8d ago",
+                age_days=8,
+            ),
+        ]),
+        ("z2", "build.example.com", [
+            _repo_row(
+                "/home/dev/code-red/active",
+                group="code-red",
+                leaf="active",
+                age="today",
+                age_days=0,
+                session_count=1,
+            ),
+        ]),
+    ]
+
+    candidates = _find_candidates(results, "my recent work", recent=True)
+
+    assert [item["host"] for item in candidates] == ["z2", "local"]
+
+
+def test_find_scans_all_hosts_and_labels_result_kinds(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        "geno_tt.cli._repos_data",
+        lambda config, all_hosts: calls.append(all_hosts) or [
+            ("local", "localhost", [
+                _repo_row(
+                    "/Users/dev/code/crit/ngrt/radio.2026.q3/ng-radio-test-rack",
+                    group="crit",
+                    leaf="ngrt/radio.2026.q3/ng-radio-test-rack",
+                    track="crit",
+                    domain="ngrt",
+                    workspace="radio",
+                    workspace_born="radio.2026.q3",
+                    repo="ng-radio-test-rack",
+                ),
+            ]),
+        ],
+    )
+    config = {
+        "default_host": "local",
+        "hosts": {"local": "localhost", "z2": "build.example.com"},
+    }
+
+    cmd_find(
+        argparse.Namespace(query=["radio", "tester"], recent=True, limit=5),
+        config,
+    )
+
+    assert calls == [True]
+    output = capsys.readouterr().out
+    assert output.startswith("host\tkind\ttarget\tactivity\tsessions\tmatching-repos\tpath\n")
+    assert "local\tworkspace\tcrit/ngrt/radio.2026.q3" in output
+
+
+def test_find_honors_an_explicit_host(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "geno_tt.cli._repos_data",
+        lambda config, all_hosts: calls.append((config["default_host"], all_hosts)) or [],
+    )
+    monkeypatch.setattr("geno_tt.cli.load_config", lambda: {
+        "default_host": "local",
+        "hosts": {"local": "localhost", "z2": "build.example.com"},
+    })
+
+    assert main(["-H", "z2", "find", "radio", "tester", "--recent"]) == 0
+
+    assert calls == [("z2", False)]
+
+
 def test_parse_rel_scheme():
     f = _parse_rel("code/crit/ngrt/deploy-split.2026.q2/main")
     assert (f["track"], f["domain"], f["workspace"], f["born"], f["repo"]) == (
         "crit", "ngrt", "deploy-split", "2026.q2", "main")
+    assert f["workspace_born"] == "deploy-split.2026.q2"
 
 
 def test_parse_rel_legacy():

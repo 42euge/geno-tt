@@ -2,15 +2,19 @@
 
 ## `tt inv` or `tt repos` cannot see canonical workspaces
 
-The current fallback discovery glob is too shallow for
-`~/code/<track>/<domain>/<workspace>.<born>/<repo>`. Add this top-level setting
-to `~/.geno/tt/config.toml`, before `[hosts]`:
+The built-in patterns cover
+`~/code/<track>/<domain>/<workspace>.<born>/<repo>` and legacy code-color
+directories. If your layout differs, add an overriding top-level setting to
+`~/.geno/tt/config.toml`, before `[hosts]`:
 
 ```toml
 repo_dirs = ["~/code/*/*/*/*/", "~/code-*/*/"]
 ```
 
 Then run `tt inv --expand` or `tt repos --all` again to refresh discovery.
+
+Every matched directory must contain a `.git` file or directory. This prevents
+track and workspace containers from being misreported as repositories.
 
 ## `tt ls` shows iTerm2 tabs instead of tmux sessions
 

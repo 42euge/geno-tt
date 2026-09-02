@@ -3,7 +3,7 @@
 Standalone CLI (`tt`) + skills. The interactive `tt` shell function (cd + iTerm
 hooks) lives in geno_tt/shell/tt.sh and is installed by the bootstrap."""
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 
 from .cli import main
 

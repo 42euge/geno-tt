@@ -75,28 +75,20 @@ tt -H build inv
 tt -H build tmux ls
 ```
 
-## 3. Configure repository discovery
+## 3. Check repository discovery
 
 `tt inv`, `tt repos`, and name/index target resolution scan the glob patterns in
-the top-level `repo_dirs` setting. The canonical layout places repositories four
-levels below `~/code`, so use:
+the top-level `repo_dirs` setting. The built-in default covers both canonical
+and legacy layouts:
 
 ```toml
-default_host = "local"
 repo_dirs = ["~/code/*/*/*/*/", "~/code-*/*/"]
-
-[hosts]
-local = "localhost"
-build = "build.example.com"
 ```
 
 The second pattern keeps legacy `~/code-<color>/<repo>` directories visible
-during a transition. Remove it if you do not have legacy directories.
-
-The current built-in fallback is `~/code*/*/`, which covers the legacy layout
-but is too shallow for canonical workspaces. Keep `repo_dirs` explicit until
-that default is corrected. See [Configuration](configuration.md) for the full
-file format.
+during a transition. You do not need to add this setting for the standard
+layouts; use `repo_dirs` only to override the defaults. See
+[Configuration](configuration.md) for the full file format.
 
 ## 4. Create a workspace
 

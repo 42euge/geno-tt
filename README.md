@@ -57,12 +57,11 @@ tt add-host local localhost --default --no-ssh
 tt hosts
 ```
 
-For the canonical workspace layout, configure repository discovery in
-`~/.geno/tt/config.toml`:
+The built-in repository discovery covers the canonical and legacy layouts.
+Configure `repo_dirs` only when your layout uses different paths:
 
 ```toml
 default_host = "local"
-repo_dirs = ["~/code/*/*/*/*/", "~/code-*/*/"]
 
 [hosts]
 local = "localhost"
@@ -101,6 +100,7 @@ Common workflows:
 # Workspaces and editors
 tt inv [-t TRACK] [-d DOMAIN] [--expand]
 tt repos [--all | -g GROUP | -s TERM | -i]
+tt find <terms...> [--recent] [--limit N]
 tt new-project <track>.<domain>.<workspace>[.<repo>]
 tt retire [<workspace>] --yes
 tt workspaces check [--fix] [--registered]

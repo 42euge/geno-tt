@@ -1,15 +1,15 @@
 ---
 name: geno-tt
 description: >-
-  Use when opening, resuming, creating, or retiring a TT workspace through
-  guided user selection instead of choosing a low-level tt command.
+  Use when finding, opening, resuming, creating, or retiring a TT workspace
+  through guided user selection instead of choosing a low-level tt command.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
-  version: "0.8.1"
+  version: "0.8.2"
 ---
 
-# Open a TT workspace
+# Find or open a TT workspace
 
 This is the single agent-facing entry point for `geno-tt`. Translate the
 user's selections into the underlying `tt` CLI command.
@@ -23,7 +23,8 @@ for the answer. Ask only for information the chosen path needs.
 Start with these choices:
 
 1. **Continue a session** — attach to work that is already running.
-2. **Open existing work** — choose a repo, then open a terminal session or VS Code.
+2. **Find or open existing work** — locate a workspace or repo, then open a
+   terminal session or VS Code.
 3. **Create a workspace** — scaffold a new workspace and its first repo.
 4. **Open a worktree** — enter an existing whole-workspace worktree.
 5. **Retire a workspace** — move a confirmed workspace into the graveyard.
@@ -33,13 +34,27 @@ unresolved selection instead of asking again.
 
 ## Resolve the target
 
-Run `tt hosts` first when the host is unknown. Automatically use the only
-configured host; otherwise let the user select one. Pass it as `tt -H <host>`
-to every command in the flow.
+When the user describes work without naming an exact target, run
+`tt find <description>` before asking them to choose a host. It searches every
+configured host, uses individual words as broad clues, groups canonical repos
+under their workspace, and labels each result as `workspace` or `repo`. Add
+`--recent` when the user mentions recent, current, or latest work. Use
+`tt -H <host> find ...` only when the user has already constrained the search
+to that host.
 
-For existing work, run `tt -H <host> repos --all`, present the matching repos,
-and let the user select one. Keep the numeric repo ID because `tt new` and
-`tt code` both accept it.
+Present a small ranked set with its host, target, matching repos, and activity
+evidence. Treat track and domain names as hierarchy, never as repositories. If
+the first query has no useful match, broaden it by removing qualifiers and
+keeping the distinctive nouns rather than guessing a host or requiring the
+whole phrase to appear verbatim.
+
+For other flows, run `tt hosts` first when the host is unknown. Automatically
+use the only configured host; otherwise let the user select one. After a find
+result is selected, reuse its host for every remaining command.
+
+For an exact existing-work request, or after selecting a find result, run
+`tt -H <host> repos --all` when a numeric repo ID is needed. Keep that ID
+because `tt new` and `tt code` both accept it.
 
 For sessions, run `tt -H <host> tmux ls`, then let the user select a live
 session. For worktrees, first select a workspace from
