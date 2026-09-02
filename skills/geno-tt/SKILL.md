@@ -6,7 +6,7 @@ description: >-
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
-  version: "0.8.1"
+  version: "0.9.0"
 ---
 
 # Open a TT workspace

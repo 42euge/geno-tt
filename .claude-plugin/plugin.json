@@ -1,12 +1,12 @@
 {
   "name": "geno-tt",
-  "description": "Terminal/session + workspace manager + iTerm2 orchestrator — the tt CLI",
-  "version": "0.3.0",
+  "description": "Terminal, workspace, and categorized macOS window manager — the tt CLI",
+  "version": "0.9.0",
   "author": { "name": "42euge", "url": "https://github.com/42euge" },
   "homepage": "https://github.com/42euge/geno-tt",
   "repository": "https://github.com/42euge/geno-tt",
   "license": "MIT",
-  "keywords": ["tmux", "workspaces", "worktrees", "sessions", "geno-ecosystem"],
+  "keywords": ["tmux", "workspaces", "worktrees", "windows", "rectangle", "geno-ecosystem"],
   "skills": [
     "./skills",
     "./skills/appearance",
@@ -15,7 +15,8 @@
     "./skills/repos",
     "./skills/sessions",
     "./skills/workspaces",
-    "./skills/worktrees"
+    "./skills/worktrees",
+    "./skills/windows"
   ],
   "hooks": "./geno_tt/hooks/hooks.json"
 }

@@ -149,6 +149,21 @@ Code starts:
 shared `~/.geno/workspace.json` registry and print all live VS Code windows, or
 `tt code --sync` to refresh it and print only the count.
 
+On macOS, install Rectangle to arrange those registered surfaces by their
+logical area or exact workspace node:
+
+```bash
+brew install --cask rectangle
+tt windows enable
+tt windows ls geno
+tt windows arrange geno --dry-run
+tt windows arrange geno
+```
+
+The default profile gives VS Code the first two thirds and iTerm or Chrome the
+last third. Edit `~/.geno/tt/windows.json` to define other named zones and
+node-specific rules.
+
 To audit all discovered workspaces without opening them, run:
 
 ```bash

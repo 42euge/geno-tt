@@ -228,11 +228,49 @@ For canonical paths, `track_colors` takes precedence. `base_theme` is restored
 outside any matching workspace. Saved iTerm2 themes themselves live under
 `~/.geno/tt/themes/` and are managed with `tt theme`.
 
+## Window layout profiles
+
+`tt windows enable` creates `~/.geno/tt/windows.json` with the built-in
+`coding` profile. Until that first mutation, the same profile is used in memory
+with arrangement disabled.
+
+```json
+{
+  "active_profile": "coding",
+  "enabled": true,
+  "profiles": {
+    "coding": {
+      "rules": [
+        {"node": "geno.*", "surface": "vscode", "zone": "primary"},
+        {"node": "geno.*", "surface": "iterm", "zone": "secondary"}
+      ],
+      "zones": {
+        "primary": "first-two-thirds",
+        "secondary": "last-third"
+      }
+    }
+  },
+  "version": 1
+}
+```
+
+Rules are evaluated in order. `node` is a shell-style pattern over registry
+nodes, `surface` is `vscode`, `iterm`, or `chrome`, and `zone` names a zone in
+the same profile. Zone values must be focused-window Rectangle actions; broad
+actions such as `tile-all` and `cascade-all` are intentionally rejected.
+
+Preview edits before moving windows:
+
+```bash
+tt windows arrange geno --profile coding --dry-run
+```
+
 ## State files
 
 | Path | Purpose |
 | --- | --- |
 | `~/.geno/tt/config.toml` | Main configuration |
+| `~/.geno/tt/windows.json` | Window arrangement policy and layout profiles |
 | `~/.geno/tt/workspace-schema.yaml` | Editable workspace creation and overlay schema |
 | `~/.geno/tt/init.sh` | Interactive shell wrapper and iTerm2 CWD/color hooks |
 | `~/.geno/tt/sessions/` | Local pointers used to recover tmux sessions |

@@ -197,6 +197,33 @@ and replace only the registry's `vscode` attachments in
 There is no separate `tt overlay` command: `tt code` reconciles while opening,
 and `tt workspaces check --fix` reconciles existing workspaces without opening.
 
+## Categorized macOS windows
+
+```text
+tt windows status [--json]
+tt windows ls [area|node] [--json]
+tt windows arrange [area|node] [--profile NAME] [--dry-run] [--json]
+tt windows enable [--json]
+tt windows disable [--json]
+```
+
+This namespace is local-only and requires macOS plus Rectangle. `ls` reads the
+shared registry without moving anything. A selector matches either an exact
+dot-notation node or every node beneath an area; omitting it selects all
+registered surfaces.
+
+`arrange --dry-run` resolves the active layout profile and reports each zone,
+Rectangle action, and targetability decision. Actual arrangement is blocked
+until `enable` persists the local policy. `disable` blocks future arrangement
+without quitting Rectangle or changing its keyboard shortcuts.
+
+Before each action TT activates the registered surface, then invokes
+`open -g rectangle://execute-action?name=<action>`. A successful result means
+the URL was dispatched; Rectangle does not acknowledge final geometry. Remote
+surfaces, missing activators, and ambiguous duplicate VS Code workspace
+locators are skipped, and the command exits nonzero if any selected surface was
+not dispatched.
+
 ## Whole-workspace worktrees
 
 Run these inside a canonical workspace, or put `-w WORKSPACE` before the
