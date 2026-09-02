@@ -54,7 +54,8 @@ after relaunch.
 
 In scope:
 
-1. **Per-session manifest** — the launch recipe, written at creation.
+1. **Per-session manifest** — the launch recipe, written at creation,
+   including per-pane agent identity and how to resume it.
 2. **Per-host registry** — a durable, merge-updated snapshot outside `/tmp`.
 3. **`tt tmux restore`** — rebuild sessions from manifest, then registry.
 4. **`_terminal_id()` correction** — stop attributing inherited iTerm
@@ -69,10 +70,12 @@ Explicitly out of scope:
 - **Scrollback and in-session state.** These live in the tmux server's
   memory. When the server dies they are gone; no metadata design
   recovers them. Restore reproduces a session's *shape*, not its history.
-- **Automatic agent relaunch on restore.** Recording that a pane ran
-  `codex` does not capture its conversation state. Restore will offer
-  the recorded command; running it is the operator's decision (see
-  "Restore semantics").
+- **Automatic agent relaunch on restore.** Restore resolves and *offers*
+  the resume command; executing it is the operator's decision, gated on
+  `--run-commands` (see "Restore semantics").
+- **Agent conversation content.** `tt` records how to ask an agent to
+  resume; it never copies or interprets transcript contents. If the
+  agent's own history is gone, resume degrades to a fresh start.
 - **Continuous session supervision.** No daemon, no watchdog. Restore
   is an explicit operator action.
 
@@ -123,7 +126,21 @@ diffable, and makes a stale entry trivially deletable.
   "launch": {
     "kind": "new-session",
     "command": ["tmux", "new-session", "-s", "gui-dev-2"],
-    "panes": [{"index": 0, "send_keys": "codex"}]
+    "panes": [
+      {
+        "index": 0,
+        "send_keys": "codex",
+        "agent": {
+          "kind": "codex",
+          "invoked_as": "codex",
+          "resume": {
+            "strategy": "by-id",
+            "template": "codex resume {session_id}",
+            "fallback": "codex resume --last"
+          }
+        }
+      }
+    ]
   },
   "mouse": true,
   "created_at": "2026-09-02T15:17:02Z"
@@ -136,6 +153,51 @@ so an agent-plus-shells layout rebuilds with the right panes running
 the right things. `cwd` is absolute and host-relative — never a
 locally-expanded `~`, which would break for remote hosts where
 `get_remote_home()` differs.
+
+### Agent panes carry a resume recipe, not just a command
+
+`send_keys` alone is insufficient, and today's recovery proved it: five
+`codex` sessions were recorded as running `codex`, so replaying that
+string starts five *blank* agents. Reproducing the command is not
+reproducing the session.
+
+Each pane that launches a known agent therefore records an `agent`
+block: which agent it is (`kind`), **how it was actually invoked**
+(`invoked_as`, verbatim — `codex`, `claude --model opus`, or the
+`clauded` wrapper `iterm_api.py:297` already uses), and how to resume it.
+
+Both agents support resume by id, verified:
+
+- `codex resume [SESSION_ID] [PROMPT]`, with `--last` for the most
+  recent — `codex resume --help`.
+- `claude -r/--resume [value]` by session id, and `-c/--continue` for
+  the most recent — `claude --help`.
+
+**The critical asymmetry: the session id does not exist at launch
+time.** The agent mints it after starting, so `new_session()` cannot
+record it. This is why `resume` holds a *template* plus a *strategy*
+rather than a literal command — the id is resolved at restore time from
+the agent's own history:
+
+- **codex** — `~/.codex/session_index.jsonl`, one JSON object per line
+  with `id`, `thread_name`, `updated_at`.
+- **claude** — `~/.claude/projects/<munged-cwd>/<uuid>.jsonl`. `tt`
+  already reads exactly this: `claude_sessions.py` provides
+  `munge_cwd()`, `session_files()`, and `session_last_interaction()`.
+  Restore reuses that module rather than reimplementing the mapping.
+
+Resolution is **cwd-scoped**: the manifest's `cwd` selects the candidate
+transcripts, and the most recent by last-human-turn wins. When exactly
+one candidate exists, restore proposes `codex resume <id>` /
+`claude -r <id>`. When several plausible candidates exist, restore shows
+them and asks rather than guessing — resuming the wrong conversation is
+worse than starting fresh. When none is found, it falls back to the
+recorded `fallback`, and failing that to `invoked_as`.
+
+A pane whose command matches no known agent records `send_keys` only,
+with no `agent` block. Agent detection is a small table keyed on the
+command's first token (`codex`, `claude`, `clauded`); an unrecognised
+command is never guessed at.
 
 ### Per-host registry
 
@@ -196,6 +258,12 @@ five `codex` processes with no conversation state is plausibly worse
 than five prompts in the right directory, and that is a judgment for
 the operator, not a default. `--run-commands` exists for the shell-and-
 server layouts where relaunching is exactly right.
+
+For agent panes, the plan shows the **resolved resume command** — not
+the original launch command — so what the operator approves is
+`codex resume 01a0631f-…` rather than a bare `codex`. `--run-commands`
+runs those resume commands. This is the difference between restoring a
+session and merely reopening a window in the right folder.
 
 ## Terminal identity fix
 
@@ -271,6 +339,14 @@ sessions.
 
 - Manifest written on `new_session()` and `spawn_layout()`, with the
   exact command recorded; round-trips through read.
+- Agent detection: `codex`, `claude`, and the `clauded` wrapper each
+  produce the right `agent.kind` and preserve `invoked_as` verbatim
+  including flags; an unrecognised command produces **no** `agent` block.
+- Resume resolution against fixture history files: single candidate
+  resolves to `resume by-id`; multiple candidates prompt instead of
+  guessing; zero candidates fall back to `fallback`, then `invoked_as`.
+- Resolution is cwd-scoped — a transcript under a different `cwd` is
+  never selected.
 - Registry merge keeps a vanished session as `alive: false` with
   `last_seen` intact — asserted specifically across a simulated
   `kill_session()`, the path that loses data today.
