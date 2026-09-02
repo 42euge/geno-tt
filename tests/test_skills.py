@@ -10,10 +10,12 @@ def _skill_dirs():
     return [p.parent for p in SKILLS.rglob("SKILL.md")]
 
 
-def test_single_guided_skill():
-    dirs = _skill_dirs()
-    assert len(dirs) == 1
-    assert dirs[0] == SKILLS / "geno-tt"
+def test_supported_skill_surface_is_explicit():
+    assert set(_skill_dirs()) == {
+        SKILLS / "geno-tt",
+        SKILLS / "windows" / "control",
+        SKILLS / "windows" / "settings",
+    }
 
 
 def test_frontmatter_valid():
@@ -26,7 +28,7 @@ def test_frontmatter_valid():
 
 
 def test_name_mirrors_path():
-    # The single visible entry point is the required umbrella skill.
+    # Workspace guidance keeps the umbrella; focused capabilities mirror paths.
     for d in _skill_dirs():
         text = (d / "SKILL.md").read_text()
         name = yaml.safe_load(text[3:text.index("---", 3)])["name"]

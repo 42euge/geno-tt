@@ -22,8 +22,10 @@ from geno_tt.cli import (
     cmd_mirror,
     cmd_scaffold,
     cmd_workspaces,
+    cmd_windows,
     main,
 )
+from geno_tt.window_control import Arrangement, Placement, Surface
 
 
 def test_parse_rel_scheme():
@@ -245,6 +247,44 @@ def test_workspaces_command_routes_check_options(monkeypatch):
     assert calls[0].action == "check"
     assert calls[0].fix is True
     assert calls[0].registered is True
+
+
+def test_windows_command_routes_area_profile_and_dry_run(monkeypatch, capsys):
+    calls = []
+    surface = Surface(
+        area="geno", node="geno.geno-tt", kind="vscode", identifier="7",
+    )
+    result = Arrangement(
+        placement=Placement(
+            surface=surface,
+            zone="primary",
+            action="first-two-thirds",
+            ready=True,
+        ),
+        status="ready",
+    )
+    fake = SimpleNamespace(arrange=lambda *args, **kwargs: (
+        calls.append((args, kwargs)) or [result]
+    ))
+    monkeypatch.setattr("geno_tt.cli.load_config", lambda: {})
+    monkeypatch.setattr("geno_tt.cli._window_control", lambda: fake)
+
+    assert main([
+        "windows", "arrange", "geno", "--profile", "desk", "--dry-run", "--json",
+    ]) == 0
+
+    assert calls == [(('geno',), {"profile_name": "desk", "dry_run": True})]
+    assert json.loads(capsys.readouterr().out)[0]["placement"]["surface"]["area"] == "geno"
+
+
+def test_windows_command_rejects_explicit_remote_host(monkeypatch):
+    monkeypatch.setattr(
+        "geno_tt.cli.load_config",
+        lambda: {"hosts": {"build": "build.example.com"}},
+    )
+
+    with pytest.raises(SystemExit, match="local-only"):
+        main(["-H", "build", "windows", "status"])
 
 
 def _workspace(tmp_path):

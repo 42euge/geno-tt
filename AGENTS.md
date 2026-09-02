@@ -28,6 +28,8 @@ Important modules:
   attach integration
 - `geno_tt/vscode.py` and `geno_tt/registry.py` — live VS Code discovery and
   the shared surface registry
+- `geno_tt/window_control.py` — area selection, layout planning, activation,
+  and Rectangle dispatch
 - `geno_tt/themes.py` and `geno_tt/iterm2_profile.py` — appearance state
 - `geno_tt/tui.py` — optional Textual session browser
 
@@ -62,6 +64,9 @@ The packaged workspace schema defaults to:
   `tt tmux ls`.
 - `geno-tt` owns only `iterm` and `vscode` attachments in
   `~/.geno/workspace.json`; preserve attachments owned by other tools.
+- Window areas are the first segment of registry nodes. Keep logical areas
+  separate from physical layout zones, and refuse placement when a registered
+  surface cannot be activated unambiguously.
 
 ## Change conventions
 

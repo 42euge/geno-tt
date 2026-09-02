@@ -169,6 +169,30 @@ tt code --sync
 
 The registry is `~/.geno/workspace.json`.
 
+## Window arrangement is unavailable or targets are skipped
+
+Check the local policy, Rectangle installation, and current registry:
+
+```bash
+tt windows status
+tt code --sync
+tt windows ls
+tt windows arrange geno --dry-run
+```
+
+Install Rectangle with `brew install --cask rectangle`, then explicitly run
+`tt windows enable`. iTerm activation also needs the optional `iterm2` package
+and iTerm2 Python API; Chrome activation needs the `surf` CLI.
+
+Remote VS Code windows cannot be placed on the local display. When multiple VS
+Code windows share the same workspace path or URI, TT refuses to guess which
+one should be frontmost. Close or recategorize the duplicate before arranging
+that node.
+
+Rectangle's URL scheme reports dispatch, not completion. If a command reports
+`dispatched` but geometry does not change, confirm Rectangle has Accessibility
+permission in macOS System Settings.
+
 ## Workspace files or repository labels have drifted
 
 Check every discovered workspace, or only workspaces attached to registered

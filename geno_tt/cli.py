@@ -2350,6 +2350,106 @@ def cmd_workspaces(args, config):
         raise SystemExit(1)
 
 
+def _window_control():
+    """Construct the local window controller lazily on its macOS-only path."""
+    from .window_control import WindowControl
+    return WindowControl()
+
+
+def _print_window_status(status: dict) -> None:
+    state = "enabled" if status["enabled"] else "disabled"
+    readiness = "ready" if status["supported"] and status["installed"] else "unavailable"
+    print(f"Window arrangement: {state} ({status['controller']} {readiness})")
+    print(
+        f"  profile {status['active_profile']} · {status['areas']} area(s) · "
+        f"{status['nodes']} node(s) · {status['surfaces']} surface(s)"
+    )
+    print(f"  settings {status['settings_path']}")
+
+
+def cmd_windows(args, config):
+    """Categorize registry surfaces and arrange them through Rectangle."""
+    from .window_control import WindowControlError
+
+    if config.get("_host_explicit"):
+        _alias, hostname = resolve_host(config)
+        if hostname != LOCAL_HOSTNAME:
+            raise SystemExit("Window arrangement is local-only; remote hosts are not supported.")
+
+    action = getattr(args, "action", None) or "status"
+    selector = getattr(args, "selector", None)
+    json_output = getattr(args, "json", False)
+    control = _window_control()
+
+    try:
+        if action == "status":
+            payload = control.status()
+            if json_output:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                _print_window_status(payload)
+            return
+
+        if action in ("enable", "disable"):
+            if selector:
+                raise WindowControlError(f"Usage: tt windows {action} [--json]")
+            payload = control.set_enabled(action == "enable")
+            if json_output:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                _print_window_status(payload)
+            return
+
+        if action == "ls":
+            surfaces = control.surfaces(selector)
+            payload = [surface.as_dict() for surface in surfaces]
+            if json_output:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            elif not surfaces:
+                target = f" for '{selector}'" if selector else ""
+                print(f"No registered surfaces found{target}.")
+            else:
+                for surface in surfaces:
+                    targetable = "" if surface.targetable and not surface.remote else " (not targetable)"
+                    print(
+                        f"  {surface.area:<14} {surface.node:<28} "
+                        f"{surface.kind:<8} {surface.identifier}{targetable}"
+                    )
+            return
+
+        if action == "arrange":
+            results = control.arrange(
+                selector,
+                profile_name=getattr(args, "profile", None),
+                dry_run=getattr(args, "dry_run", False),
+            )
+            payload = [result.as_dict() for result in results]
+            if json_output:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                for result in results:
+                    placement = result.placement
+                    verb = "would dispatch" if result.status == "ready" else result.status
+                    mapping = (
+                        f"{placement.surface.node}/{placement.surface.kind} "
+                        f"→ {placement.zone or '-'}"
+                    )
+                    if placement.action:
+                        mapping += f" ({placement.action})"
+                    print(f"  {verb:<14} {mapping}")
+                    if result.detail and result.status in ("failed", "skipped"):
+                        print(f"    {result.detail}")
+            if any(result.status in ("failed", "skipped") for result in results):
+                raise SystemExit(1)
+            return
+
+        raise WindowControlError(
+            f"Unknown windows action '{action}'. Use status|ls|arrange|enable|disable."
+        )
+    except WindowControlError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
 def cmd_report(args, config):
     """Cross-host inventory: render the scheme tree for every configured host."""
     if not config.get("hosts"):
@@ -2444,7 +2544,7 @@ def cmd_spawn(args, config):
     print(f"  attach: tt {session}")
 
 
-SUBCOMMANDS = {"ls", "kill", "new", "new-project", "retire", "workspaces", "wt", "iterm", "tmux", "code", "repos", "inv",
+SUBCOMMANDS = {"ls", "kill", "new", "new-project", "retire", "workspaces", "windows", "wt", "iterm", "tmux", "code", "repos", "inv",
                "report", "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
                "default", "add-host", "profile", "theme",
                # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task/name' work directly
@@ -2542,6 +2642,11 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt report [--all-hosts]")
         print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
         print("  tt mirror <workspace> <host>")
+        print("")
+        print("macOS windows:")
+        print("  tt windows status|enable|disable")
+        print("  tt windows ls [area|node] [--json]")
+        print("  tt windows arrange [area|node] [--profile NAME] [--dry-run]")
         print("")
         print("hosts / appearance:")
         print("  tt hosts  tt add-host  tt default  tt profile  tt theme")
@@ -2676,6 +2781,15 @@ def main(argv: list[str] | None = None) -> int:
         wsp.add_argument("--fix", action="store_true")
         wsp.add_argument("--registered", action="store_true")
         cmd_workspaces(wsp.parse_args(argv[1:]), config)
+
+    elif cmd == "windows":
+        wnp = argparse.ArgumentParser(prog="tt windows", add_help=False)
+        wnp.add_argument("action", nargs="?", default="status")
+        wnp.add_argument("selector", nargs="?", default=None)
+        wnp.add_argument("--profile", default=None)
+        wnp.add_argument("--dry-run", action="store_true")
+        wnp.add_argument("--json", action="store_true")
+        cmd_windows(wnp.parse_args(argv[1:]), config)
 
     elif cmd == "wt":
         wp = argparse.ArgumentParser(prog="tt wt", add_help=False)

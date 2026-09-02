@@ -119,6 +119,28 @@ live VS Code windows. Both preserve attachment types owned by other tools.
 checks every canonical local workspace referenced by either an iTerm or VS Code
 attachment. Add `--fix` to repair their overlay files in place.
 
+## Areas, nodes, surfaces, and zones
+
+Window layout uses the registry's existing identities instead of maintaining a
+second categorization database. The first segment of a node is its logical
+**area**: `geno` is the area containing `geno.geno-tt` and `geno.geno-tools`.
+A concrete VS Code window, iTerm tab, or browser group attached to a node is a
+**surface**.
+
+Logical categories are separate from physical placement. A layout profile maps
+surfaces to named **zones**, then maps each zone to a Rectangle action:
+
+```text
+geno.geno-tt
+├── vscode surface → primary zone   → first-two-thirds
+└── iterm surface  → secondary zone → last-third
+```
+
+Rectangle can resize only the frontmost window. TT therefore activates each
+registered surface before dispatching its zone's action. A remote window or
+multiple VS Code windows sharing one workspace locator is listed but skipped
+because TT cannot select it reliably.
+
 ## The binary and the shell layer
 
 The Python `tt` executable performs discovery and orchestration. A small shell

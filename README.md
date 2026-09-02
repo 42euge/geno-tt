@@ -1,8 +1,8 @@
 # geno-tt
 
 `geno-tt` is the `tt` command: one interface for code workspaces, whole-workspace
-Git worktrees, iTerm2 tabs, VS Code windows, and tmux sessions on local or remote
-hosts.
+Git worktrees, categorized macOS windows, iTerm2 tabs, VS Code windows, and
+tmux sessions on local or remote hosts.
 
 ```text
 ~/code/<track>/<domain>/<workspace>.<born>/<repo>
@@ -14,6 +14,7 @@ Its main jobs are:
 - inventory, create, and retire workspaces in the code-org layout;
 - create the same named Git worktree across every repository in a workspace;
 - open a workspace as one VS Code window and register live editor windows;
+- arrange registered macOS surfaces by logical area and workspace node;
 - organize iTerm2 tabs using dot-notation names; and
 - create, find, attach to, and clean up tmux sessions across configured hosts.
 
@@ -41,6 +42,7 @@ Optional features have separate dependencies:
 ```bash
 pipx inject geno-tt iterm2   # iTerm2 orchestration
 pipx inject geno-tt textual  # interactive tmux TUI
+brew install --cask rectangle  # macOS window arrangement
 ```
 
 The geno-tools and plugin installers add the interactive shell layer at session
@@ -108,6 +110,14 @@ tt code <repo|index|canonical-path> [--theme THEME] [--tag repo=tag]
 tt code --list-open
 tt code --sync
 
+# Categorized macOS windows
+tt windows status
+tt windows ls [area|node]
+tt windows arrange [area|node] --dry-run
+tt windows enable
+tt windows arrange [area|node]
+tt windows disable
+
 # Whole-workspace worktrees
 tt wt new <name>
 tt wt ls
@@ -140,11 +150,13 @@ Global flags such as `-H`, `--tab`, and `--cc` go before the command. See the
 - [Troubleshooting](docs/troubleshooting.md) — common setup and runtime failures
 - [AGENTS.md](AGENTS.md) — architecture and contributor conventions
 
-Agent-facing TT work uses the single guided [`$geno-tt`](skills/geno-tt/SKILL.md)
-skill. It asks the user whether to continue a session, open existing work,
-create or retire a workspace, or enter a worktree, then translates that
-selection into the appropriate CLI command. The docs above remain the
-user-facing source of truth for lower-level commands.
+Agent-facing workspace work uses the guided [`$geno-tt`](skills/geno-tt/SKILL.md)
+skill. Window work is split between
+[`$geno-tt-windows-control`](skills/windows/control/SKILL.md) for listing,
+previewing, and arranging surfaces and
+[`$geno-tt-windows-settings`](skills/windows/settings/SKILL.md) for explicit
+enable/disable requests. The docs above remain the user-facing source of truth
+for lower-level commands.
 
 ## Development
 
