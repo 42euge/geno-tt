@@ -11,8 +11,12 @@ metadata:
 
 # Open a TT workspace
 
-This is the single agent-facing entry point for `geno-tt`. Translate the
-user's selections into the underlying `tt` CLI command.
+This is the guided agent-facing entry point for `geno-tt`. Translate the user's
+selections into the underlying `tt` CLI command.
+
+When the user asks whether a workspace is safe to retire, use the focused
+`$geno-tt-workspaces-check-retirement` skill and stop after its audit. An audit
+is not confirmation to retire.
 
 ## Guided selection
 
