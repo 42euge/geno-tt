@@ -36,6 +36,12 @@ def test_resolve_workspace_scans_workspace_dirs_instead_of_repos(monkeypatch):
         "/home/dev/code/chore/geno/empty.2026.q3",
         "empty.2026.q3",
     )
+    assert cli._resolve_workspace(
+        "build.example.com", "chore.geno.empty.2026.q3", {},
+    ) == (
+        "/home/dev/code/chore/geno/empty.2026.q3",
+        "empty.2026.q3",
+    )
 
 
 def test_list_workspace_paths_uses_remote_canonical_globs(monkeypatch):

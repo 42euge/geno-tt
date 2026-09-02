@@ -37,7 +37,9 @@ better-docs.2026.q3/
 Commands such as `tt repos`, `tt new`, and a repository-name form of `tt code`
 can target one repo. Worktree mutations also target one repo, while `tt wt ls`
 provides a workspace-wide overview. Commands such as `tt mirror` and `tt spawn`
-operate on the workspace as a unit.
+operate on the workspace as a unit. Mirroring uses rsync to preserve the local
+workspace's current filesystem and Git state on another host; dispatch then
+adds a task handoff and an isolated remote worktree on top of that host copy.
 
 Every workspace-management path shares one overlay schema. The workspace root
 is the first VS Code folder, each top-level repository keeps its directory name

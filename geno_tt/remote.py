@@ -643,6 +643,63 @@ def clone_repos(hostname: str, ws_abs: str, urls: dict) -> list[tuple]:
     return [(n, "remote") for n in urls]
 
 
+def sync_workspace(source: str, target_hostname: str, target: str) -> None:
+    """Rsync one local TT workspace into the same workspace on another host.
+
+    The workspace contents, repository metadata, dirty files, untracked files,
+    and ignored files are transferred. Whole-workspace worktrees are excluded
+    because their Git metadata contains source-machine paths. Existing files
+    that exist only on the target are retained; mirroring is non-destructive.
+    """
+    import shlex
+
+    source_path = Path(source).expanduser().resolve()
+    if not source_path.is_dir():
+        raise RuntimeError(f"Workspace does not exist: {source_path}")
+
+    target_path = target.rstrip("/")
+    if _is_local(target_hostname):
+        destination_path = Path(target_path).expanduser().resolve()
+        if destination_path == source_path:
+            raise RuntimeError("Mirror source and destination are the same workspace.")
+        destination_path.mkdir(parents=True, exist_ok=True)
+        destination = f"{destination_path}/"
+    else:
+        mkdir = _ssh_run(
+            target_hostname,
+            f"mkdir -p -- {shlex.quote(target_path)}",
+        )
+        if mkdir.returncode != 0:
+            detail = mkdir.stderr.strip() or mkdir.stdout.strip()
+            raise RuntimeError(
+                f"Could not create remote workspace {target_hostname}:{target_path}: "
+                f"{detail or f'ssh exited with {mkdir.returncode}'}"
+            )
+        destination = f"{target_hostname}:{target_path}/"
+
+    command = [
+        "rsync",
+        "--archive",
+        "--exclude", ".wt/",
+        "--exclude", ".DS_Store",
+        f"{source_path}/",
+        destination,
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "rsync is required to mirror a workspace. Install rsync locally "
+            "and on the destination host."
+        ) from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(
+            f"Could not mirror workspace with rsync: "
+            f"{detail or f'rsync exited with {result.returncode}'}"
+        )
+
+
 def workspace_repo_remotes(hostname: str, ws_abs: str) -> dict:
     """Map {repo_name: origin_url} for the git repos in a workspace (local/remote)."""
     repos = list_workspace_repos(hostname, ws_abs)

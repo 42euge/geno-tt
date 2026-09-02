@@ -120,34 +120,52 @@ def test_ecosystem_clone_reconciles_after_cloning(monkeypatch):
     )]
 
 
-def test_mirror_reconciles_the_target_after_cloning(monkeypatch):
+def test_mirror_rsyncs_an_explicit_local_workspace_without_registry_lookup(
+    monkeypatch, tmp_path,
+):
     calls = []
-    source = "/Users/dev/code/explore/geno/docs.2026.q3"
+    source = tmp_path / "code/explore/geno/geno-dev.2026.q3"
+    source.mkdir(parents=True)
+    (source / "dirty-untracked.txt").write_text("mirror this exact state\n")
     monkeypatch.setattr(
         "geno_tt.cli.resolve_host", lambda config: ("local", "localhost"),
     )
-    monkeypatch.setattr("geno_tt.cli._detect_workspace", lambda: source)
     monkeypatch.setattr(
-        "geno_tt.cli.workspace_repo_remotes",
-        lambda hostname, workspace: {"geno-tt": "https://example.test/geno-tt.git"},
+        "geno_tt.cli._resolve_workspace",
+        lambda *args: pytest.fail("explicit local paths must not use registry lookup"),
     )
     monkeypatch.setattr(
         "geno_tt.cli.get_remote_home",
-        lambda hostname: "/Users/dev" if hostname == "localhost" else "/home/dev",
+        lambda hostname: str(tmp_path) if hostname == "localhost" else "/home/dev",
     )
-    monkeypatch.setattr("geno_tt.cli.clone_repos", lambda *args: [])
     monkeypatch.setattr(
         "geno_tt.cli._reconcile_workspace",
         lambda hostname, workspace, **kwargs: calls.append((hostname, workspace, kwargs)),
     )
+    transfers = []
+
+    def run(argv, **kwargs):
+        transfers.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("geno_tt.remote.subprocess.run", run)
 
     cmd_mirror(SimpleNamespace(
-        host="build", workspace=None, workspace_pos=None,
+        host="build", workspace=str(source), workspace_pos=None,
     ), {"hosts": {"build": "build.example.com"}})
 
+    assert transfers[0][0][0:2] == ["ssh", "build.example.com"]
+    assert transfers[1][0] == [
+        "rsync",
+        "--archive",
+        "--exclude", ".wt/",
+        "--exclude", ".DS_Store",
+        f"{source}/",
+        "build.example.com:/home/dev/code/explore/geno/geno-dev.2026.q3/",
+    ]
     assert calls == [(
         "build.example.com",
-        "/home/dev/code/explore/geno/docs.2026.q3",
+        "/home/dev/code/explore/geno/geno-dev.2026.q3",
         {"fix": True},
     )]
 

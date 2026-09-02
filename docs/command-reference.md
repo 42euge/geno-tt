@@ -135,9 +135,12 @@ tt mirror [<workspace>] <target-host>
 tt mirror -w <workspace> <target-host>
 ```
 
-Clone every repository remote from a source workspace into the same relative
-workspace path on another host. The source is the current workspace when
-possible, otherwise it is resolved on the default or `-H` host.
+Rsync the complete local workspace into the same relative workspace path on
+another host. This transfers repository metadata, branches, dirty and untracked
+files, and ignored files without deleting files that exist only on the target.
+`.wt/` is excluded because Git worktree metadata contains source-machine paths;
+`.DS_Store` is also excluded. The source is the current local workspace when
+possible or an explicit local workspace path/name.
 
 Creating, ecosystem-cloning, and mirroring a workspace all reconcile the same
 workspace overlay described below, locally or over SSH.

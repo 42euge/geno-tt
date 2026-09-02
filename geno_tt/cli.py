@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from . import worktrees
 from .config import load_config, resolve_host, SESSIONS_DIR
 from .dispatch import list_dispatches, recall_dispatch, start_dispatch
-from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_paths, list_workspace_repos, discover_owner_repos, clone_repos, workspace_repo_remotes, move_workspace, spawn_layout, LOCAL_HOSTNAME
+from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_paths, list_workspace_repos, discover_owner_repos, clone_repos, move_workspace, sync_workspace, spawn_layout, LOCAL_HOSTNAME
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
 from .iterm2 import is_iterm2, should_use_control_mode, should_open_new_tab, emit_pre_connect_sequences
@@ -859,7 +859,8 @@ def _resolve_workspace(hostname, target, config):
         match = schema.match_workspace(workspace)
         if match is None or match.root != workspace:
             continue
-        if target in (match.workspace, match.workspace_born):
+        workspace_id = f"{match.track}.{match.domain}.{match.workspace_born}"
+        if target in (match.workspace, match.workspace_born, workspace_id, match.root):
             seen[match.root] = match.workspace_born
     if not seen:
         raise SystemExit(f"No workspace matching '{target}' on host. Try tt ls.")
@@ -2615,30 +2616,55 @@ def cmd_ecosystem_clone(args, config):
 
 
 def cmd_mirror(args, config):
-    """Replicate a workspace's repos onto another configured host.
+    """Rsync a local workspace onto another configured host.
 
-    tt mirror <workspace> <host>   (source = default/-H host; target = <host>)
+    tt mirror <workspace> <host>
     """
     src_alias, src_host = resolve_host(config)
     hosts = config.get("hosts", {})
     target = args.host
     target_host = hosts.get(target, target)
-    src_ws = _detect_workspace() if not args.workspace else None
+    spec = args.workspace or args.workspace_pos
+    explicit_path = Path(spec).expanduser() if spec else None
+    if explicit_path and explicit_path.is_absolute() and explicit_path.is_dir():
+        ws_abs = str(explicit_path.resolve())
+        match = _schema().match_workspace(ws_abs)
+        if match is None or match.root != ws_abs:
+            raise SystemExit(f"Not a canonical TT workspace: {ws_abs}")
+        label = match.workspace_born
+        src_host = LOCAL_HOSTNAME
+        src_alias = next(
+            (name for name, host in hosts.items() if host == LOCAL_HOSTNAME),
+            "local",
+        )
+        src_ws = None
+    else:
+        src_ws = _detect_workspace() if not spec else None
     if src_ws:
         ws_abs, label = src_ws, Path(src_ws).name
-    else:
-        spec = args.workspace or args.workspace_pos
+        src_host = LOCAL_HOSTNAME
+        src_alias = next(
+            (name for name, host in hosts.items() if host == LOCAL_HOSTNAME),
+            "local",
+        )
+    elif not (explicit_path and explicit_path.is_absolute() and explicit_path.is_dir()):
         ws_abs, label = _resolve_workspace(src_host, spec, config)
-    remotes = workspace_repo_remotes(src_host, ws_abs)
-    if not remotes:
-        raise SystemExit(f"No repos with remotes found in {label}.")
+    if src_host != LOCAL_HOSTNAME:
+        raise SystemExit(
+            "Workspace mirroring currently requires a local source workspace."
+    )
     # same scheme-relative path on the target
     src_home = get_remote_home(src_host)
-    rel = ws_abs[len(src_home) + 1:] if ws_abs.startswith(src_home) else ws_abs
+    try:
+        rel = Path(ws_abs).relative_to(Path(src_home)).as_posix()
+    except ValueError as exc:
+        raise SystemExit(
+            f"Workspace is outside the local TT home: {ws_abs}"
+        ) from exc
     tgt_home = get_remote_home(target_host)
     tgt_abs = f"{tgt_home}/{rel}"
-    print(f"Mirroring {len(remotes)} repo(s): {src_alias}:{label} → {target}:{rel}")
-    clone_repos(target_host, tgt_abs, remotes)
+    print(f"Mirroring workspace state: {src_alias}:{label} → {target}:{rel}")
+    sync_workspace(ws_abs, target_host, tgt_abs)
     _reconcile_workspace(target_host, tgt_abs, fix=True)
     print(f"  done → {target}:{tgt_abs}")
 
