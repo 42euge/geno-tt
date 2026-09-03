@@ -3,6 +3,8 @@
 from pathlib import Path
 import subprocess
 
+import pytest
+
 from geno_tt import worktrees
 
 
@@ -127,3 +129,114 @@ def test_remote_creation_quotes_paths(monkeypatch):
         "'/home/dev/demo.2026.q3/repo with space.worktrees/review'"
         in commands
     )
+
+
+def test_retirement_preserves_branch_and_records_event(tmp_path):
+    workspace, repo = _repository(tmp_path)
+    target = worktrees.create_repository_worktree(
+        "localhost", str(workspace), "geno-tt", "retirement"
+    )
+    preview = worktrees.preview_retirement(
+        "localhost", str(workspace), "geno-tt", "retirement"
+    )
+
+    record = worktrees.retire_repository_worktree(
+        "localhost",
+        str(workspace),
+        "geno-tt",
+        preview,
+        discard=False,
+    )
+
+    assert preview.dirty is False
+    assert not Path(target).exists()
+    assert not (workspace / "geno-tt.worktrees").exists()
+    assert _git(
+        "show-ref", "--verify", "refs/heads/wt/retirement", cwd=repo
+    ).returncode == 0
+    assert record["repo"] == "geno-tt"
+    assert record["branch"] == "wt/retirement"
+    assert record["discarded"] is False
+    assert worktrees.load_retirement_records(
+        "localhost", str(workspace)
+    ) == [record]
+
+
+def test_dirty_retirement_blocks_without_discard(tmp_path):
+    workspace, _repo = _repository(tmp_path)
+    target = Path(
+        worktrees.create_repository_worktree(
+            "localhost", str(workspace), "geno-tt", "retirement"
+        )
+    )
+    (target / "dirty.txt").write_text("uncommitted\n")
+    preview = worktrees.preview_retirement(
+        "localhost", str(workspace), "geno-tt", "retirement"
+    )
+
+    with pytest.raises(worktrees.DirtyWorktreeError):
+        worktrees.retire_repository_worktree(
+            "localhost",
+            str(workspace),
+            "geno-tt",
+            preview,
+            discard=False,
+        )
+
+    assert preview.dirty is True
+    assert target.exists()
+    assert not (workspace / ".tt").exists()
+
+
+def test_dirty_retirement_discards_only_when_explicit(tmp_path):
+    workspace, _repo = _repository(tmp_path)
+    target = Path(
+        worktrees.create_repository_worktree(
+            "localhost", str(workspace), "geno-tt", "retirement"
+        )
+    )
+    (target / "dirty.txt").write_text("uncommitted\n")
+    preview = worktrees.preview_retirement(
+        "localhost", str(workspace), "geno-tt", "retirement"
+    )
+
+    record = worktrees.retire_repository_worktree(
+        "localhost",
+        str(workspace),
+        "geno-tt",
+        preview,
+        discard=True,
+    )
+
+    assert not target.exists()
+    assert record["discarded"] is True
+
+
+def test_remote_retirement_appends_quoted_record(monkeypatch):
+    calls = []
+    entry = worktrees.WorktreeEntry(
+        repo="geno-tt",
+        name="review",
+        path="/home/dev/demo.2026.q3/geno-tt.worktrees/review",
+        branch="wt/review",
+        head="abc",
+        managed=True,
+    )
+    monkeypatch.setattr(
+        worktrees,
+        "_ssh_run",
+        lambda hostname, command: calls.append((hostname, command))
+        or subprocess.CompletedProcess([], 0, "", ""),
+    )
+
+    worktrees.retire_repository_worktree(
+        "build.example.com",
+        "/home/dev/demo.2026.q3",
+        "geno-tt",
+        worktrees.RetirementPreview(entry, False),
+        discard=False,
+    )
+
+    commands = "\n".join(command for _, command in calls)
+    assert "retired-worktrees.jsonl" in commands
+    assert "wt/review" in commands

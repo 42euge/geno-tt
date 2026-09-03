@@ -1,6 +1,8 @@
 """Repository-scoped Git worktree lifecycle operations."""
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
 from pathlib import Path, PurePosixPath
 import shlex
 import subprocess
@@ -170,3 +172,159 @@ def create_repository_worktree(
         argv.extend(["-b", branch, target])
     _checked(hostname, argv)
     return target
+
+
+def preview_retirement(
+    hostname: str,
+    workspace: str,
+    repo: str,
+    name: str,
+) -> RetirementPreview:
+    """Resolve one linked checkout and report whether it has local changes."""
+    validate_worktree_name(name)
+    matches = [
+        item
+        for item in list_repository_worktrees(hostname, workspace, repo)
+        if item.name == name
+    ]
+    if not matches:
+        raise WorktreeError(f"No worktree '{name}' for {repo}.")
+    if len(matches) > 1:
+        raise WorktreeError(f"Worktree '{name}' is ambiguous for {repo}.")
+    status = _checked(
+        hostname,
+        [
+            "git",
+            "-C",
+            matches[0].path,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ],
+    )
+    return RetirementPreview(entry=matches[0], dirty=bool(status.strip()))
+
+
+def _history_path(workspace: str) -> str:
+    return str(
+        PurePosixPath(workspace) / ".tt" / "retired-worktrees.jsonl"
+    )
+
+
+def _append_retirement_record(
+    hostname: str,
+    workspace: str,
+    record: dict,
+) -> None:
+    line = json.dumps(record, sort_keys=True, separators=(",", ":"))
+    history = _history_path(workspace)
+    metadata_dir = str(PurePosixPath(history).parent)
+    if hostname == LOCAL_HOSTNAME:
+        try:
+            path = Path(history)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a") as handle:
+                handle.write(f"{line}\n")
+        except OSError as exc:
+            raise WorktreeError(
+                "Checkout retired, but its history record could not be "
+                f"written: {exc}"
+            ) from exc
+        return
+    script = (
+        f"mkdir -p {shlex.quote(metadata_dir)} && "
+        f"printf '%s\\n' {shlex.quote(line)} >> {shlex.quote(history)}"
+    )
+    result = _ssh_run(hostname, script)
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise WorktreeError(
+            "Checkout retired, but its history record could not be written: "
+            f"{detail or 'remote write failed'}"
+        )
+
+
+def _remove_empty_managed_container(
+    hostname: str,
+    workspace: str,
+    repo: str,
+) -> None:
+    container = managed_container(workspace, repo)
+    if hostname == LOCAL_HOSTNAME:
+        try:
+            Path(container).rmdir()
+        except OSError:
+            pass
+        return
+    _ssh_run(
+        hostname,
+        f"rmdir {shlex.quote(container)} 2>/dev/null || true",
+    )
+
+
+def retire_repository_worktree(
+    hostname: str,
+    workspace: str,
+    repo: str,
+    preview: RetirementPreview,
+    *,
+    discard: bool,
+) -> dict:
+    """Remove one checkout, preserving its branch and recording retirement."""
+    if preview.dirty and not discard:
+        raise DirtyWorktreeError(
+            "Worktree has uncommitted files; preserve them or use "
+            "--discard --yes."
+        )
+    primary = str(PurePosixPath(workspace) / repo)
+    argv = ["git", "-C", primary, "worktree", "remove"]
+    if preview.dirty:
+        argv.append("--force")
+    argv.append(preview.entry.path)
+    _checked(hostname, argv)
+    record = {
+        "repo": repo,
+        "name": preview.entry.name,
+        "branch": preview.entry.branch,
+        "path": preview.entry.path,
+        "retired_at": datetime.now(timezone.utc).isoformat(),
+        "discarded": preview.dirty,
+    }
+    _append_retirement_record(hostname, workspace, record)
+    _remove_empty_managed_container(hostname, workspace, repo)
+    return record
+
+
+def load_retirement_records(hostname: str, workspace: str) -> list[dict]:
+    """Load valid retirement history records in append order."""
+    history = _history_path(workspace)
+    if hostname == LOCAL_HOSTNAME:
+        try:
+            text = Path(history).read_text()
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise WorktreeError(
+                f"Could not read retirement history: {exc}"
+            ) from exc
+    else:
+        script = (
+            f"if [ -f {shlex.quote(history)} ]; then "
+            f"cat {shlex.quote(history)}; fi"
+        )
+        result = _ssh_run(hostname, script)
+        if result.returncode:
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise WorktreeError(
+                f"Could not read retirement history: {detail}"
+            )
+        text = result.stdout
+    records = []
+    for line in text.splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
