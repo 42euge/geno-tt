@@ -9,8 +9,9 @@ import sys
 
 from pathlib import Path, PurePosixPath
 
+from . import worktrees
 from .config import load_config, resolve_host, SESSIONS_DIR
-from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_paths, list_workspace_repos, list_worktrees, add_worktree, remove_worktree, discover_owner_repos, clone_repos, workspace_repo_remotes, move_workspace, spawn_layout, LOCAL_HOSTNAME
+from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_paths, list_workspace_repos, discover_owner_repos, clone_repos, workspace_repo_remotes, move_workspace, spawn_layout, LOCAL_HOSTNAME
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
 from .iterm2 import is_iterm2, should_use_control_mode, should_open_new_tab, emit_pre_connect_sequences
@@ -877,14 +878,49 @@ def cmd_retire(args, config):
     print(f"  {destination}")
 
 
-def cmd_wt(args, config):
-    """Whole-workspace worktrees: tt [-H host] wt new|ls|cd|rm <name> [-w workspace].
+def _resolve_worktree_repo(
+    host: str,
+    workspace: str,
+    repos: list[str],
+    explicit: str | None,
+    *,
+    cwd: str | None = None,
+) -> str:
+    """Resolve one repository for a repository-scoped worktree action."""
+    if explicit:
+        exact = [repo for repo in repos if repo == explicit]
+        by_name = [
+            repo
+            for repo in repos
+            if PurePosixPath(repo).name == explicit
+        ]
+        matches = exact or by_name
+        if len(matches) != 1:
+            raise SystemExit(
+                f"Repository '{explicit}' is missing or ambiguous."
+            )
+        return matches[0]
+    if host == LOCAL_HOSTNAME and cwd:
+        current = Path(cwd).resolve(strict=False)
+        for repo in repos:
+            primary = (Path(workspace) / repo).resolve(strict=False)
+            container = Path(
+                worktrees.managed_container(workspace, repo)
+            ).resolve(strict=False)
+            if (
+                current == primary
+                or primary in current.parents
+                or current == container
+                or container in current.parents
+            ):
+                return repo
+    if len(repos) == 1:
+        return repos[0]
+    raise SystemExit("Select a repository with --repo <name>.")
 
-    Without -w, operates on the workspace containing the current directory
-    (local). With -w <workspace> (and usually -H <host>), resolves that
-    workspace on the target host and operates over SSH. Worktrees live in
-    <workspace>/.wt/<name>/ with one git worktree per repo (branch wt/<name>).
-    """
+
+def cmd_wt(args, config):
+    """Manage repository worktrees inside a local or remote workspace."""
     action = getattr(args, "action", None) or "ls"
     name = getattr(args, "name", None)
     ws_target = getattr(args, "workspace", None)
@@ -903,22 +939,65 @@ def cmd_wt(args, config):
         ws_abs, label = _resolve_workspace(host, ws_target, config)
 
     is_remote = host != LOCAL_HOSTNAME
-    from datetime import datetime, timezone
+    repos = list_workspace_repos(host, ws_abs)
+    if not repos:
+        raise SystemExit(f"No git repos found in workspace {label}.")
 
     if action == "ls":
-        wts = list_worktrees(host, ws_abs)
-        if not wts:
-            print(f"{_DIM}No worktrees in {label}.{_RESET}")
-            print(f"{_DIM}tt wt new <name>{' -w ' + label if is_remote else ''}{_RESET}")
-            return
-        print(f"{_BOLD}{label}{_RESET} {_DIM}— {len(wts)} worktree(s){_RESET}")
-        for w in sorted(wts, key=lambda x: -x["mtime"]):
-            age = ""
-            if w["mtime"]:
-                days = (datetime.now(timezone.utc) - datetime.fromtimestamp(w["mtime"], timezone.utc)).days
-                age = "today" if days == 0 else f"{days}d ago"
-            print(f"  {w['name']}  {_DIM}{age}{_RESET}")
+        try:
+            groups = [
+                (
+                    repo,
+                    worktrees.list_repository_worktrees(host, ws_abs, repo),
+                )
+                for repo in repos
+            ]
+        except worktrees.WorktreeError as exc:
+            raise SystemExit(str(exc)) from exc
+        active = sum(len(entries) for _repo, entries in groups)
+        if active:
+            print(
+                f"{_BOLD}{label}{_RESET} "
+                f"{_DIM}— {active} active worktree(s){_RESET}"
+            )
+            for repo, entries in groups:
+                if not entries:
+                    continue
+                print(f"  {_BOLD}{repo}{_RESET}")
+                for entry in entries:
+                    location = "managed" if entry.managed else "external"
+                    branch = entry.branch or "detached"
+                    print(
+                        f"    {entry.name}  {_DIM}{branch} · "
+                        f"{location}{_RESET}"
+                    )
+        else:
+            print(f"{_DIM}No active worktrees in {label}.{_RESET}")
+            suffix = f" -w {label}" if is_remote else ""
+            print(f"{_DIM}tt wt new <name>{suffix}{_RESET}")
+        if getattr(args, "retired", False):
+            try:
+                retired = worktrees.load_retirement_records(host, ws_abs)
+            except worktrees.WorktreeError as exc:
+                raise SystemExit(str(exc)) from exc
+            if retired:
+                print(f"  {_BOLD}retired{_RESET}")
+                for record in retired:
+                    branch = record.get("branch") or "detached"
+                    print(
+                        f"    {record.get('repo', '?')}:"
+                        f"{record.get('name', '?')}  {_DIM}{branch} · "
+                        f"{record.get('retired_at', 'unknown')}{_RESET}"
+                    )
         return
+
+    repo = _resolve_worktree_repo(
+        host,
+        ws_abs,
+        repos,
+        getattr(args, "repo", None),
+        cwd=str(Path.cwd()),
+    )
 
     if action == "fanout":
         import shlex
@@ -927,65 +1006,103 @@ def cmd_wt(args, config):
         except (TypeError, ValueError):
             raise SystemExit("Usage: tt wt fanout <N> <prompt…>")
         prompt = " ".join(getattr(args, "rest", []) or [])
-        repos = list_workspace_repos(host, ws_abs)
-        if not repos:
-            raise SystemExit(f"No git repos in workspace {label}.")
         started = []
         for i in range(1, count + 1):
             wname = f"fanout-{i}"
             try:
-                root = add_worktree(host, ws_abs, wname, repos)
-            except Exception as e:
-                raise SystemExit(f"git worktree failed: {getattr(e, 'stderr', '') or e}")
+                root = worktrees.create_repository_worktree(
+                    host, ws_abs, repo, wname
+                )
+            except worktrees.WorktreeError as exc:
+                raise SystemExit(str(exc)) from exc
             agent = "claude" + (f" {shlex.quote(prompt)}" if prompt else "")
-            spawn_layout(host, root, f"{label.split('.')[0]}-{wname}", 1, 0, agent_cmd=agent)
+            session = f"{label.split('.')[0]}-{Path(repo).name}-{wname}"
+            spawn_layout(host, root, session, 1, 0, agent_cmd=agent)
             started.append(wname)
-        print(f"Fanned out {len(started)} worktree(s) in {label}, each running an agent:")
+        print(
+            f"Fanned out {len(started)} worktree(s) for {repo}, "
+            "each running an agent:"
+        )
         for w in started:
-            print(f"  {_DIM}└{_RESET} {w}  (tmux: {label.split('.')[0]}-{w})")
+            session = f"{label.split('.')[0]}-{Path(repo).name}-{w}"
+            print(f"  {_DIM}└{_RESET} {w}  (tmux: {session})")
         return
 
     if not name:
         raise SystemExit(f"Usage: tt wt {action} <name>")
 
     if action == "new":
-        repos = list_workspace_repos(host, ws_abs)
-        if not repos:
-            raise SystemExit(f"No git repos found in workspace {label}.")
-        print(f"Worktreeing {len(repos)} repo(s) into {label}/.wt/{name}/ ...")
         try:
-            root = add_worktree(host, ws_abs, name, repos)
-        except Exception as e:
-            detail = getattr(e, "stderr", "") or str(e)
-            raise SystemExit(f"git worktree failed: {detail.strip()}")
+            root = worktrees.create_repository_worktree(
+                host, ws_abs, repo, name
+            )
+        except worktrees.WorktreeError as exc:
+            raise SystemExit(str(exc)) from exc
         print(f"Created {root}")
-        for r in repos:
-            print(f"  {_DIM}└{_RESET} {r}")
         if is_remote:
             print(f"  {_DIM}(remote — cd there in an SSH/tt session){_RESET}")
         else:
             _emit_cd(root)
 
     elif action == "cd":
-        root = f"{ws_abs}/.wt/{name}"
-        names = {w["name"] for w in list_worktrees(host, ws_abs)}
-        if name not in names:
-            raise SystemExit(f"No worktree '{name}'. tt wt ls to list.")
+        try:
+            matches = [
+                entry
+                for entry in worktrees.list_repository_worktrees(
+                    host, ws_abs, repo
+                )
+                if entry.name == name
+            ]
+        except worktrees.WorktreeError as exc:
+            raise SystemExit(str(exc)) from exc
+        if not matches:
+            raise SystemExit(f"No worktree '{name}' for {repo}.")
+        if len(matches) > 1:
+            raise SystemExit(f"Worktree '{name}' is ambiguous for {repo}.")
+        root = matches[0].path
         if is_remote:
-            print(root)  # nothing to cd locally; print the remote path
+            print(root)
         else:
             _emit_cd(root)
 
-    elif action == "rm":
-        repos = list_workspace_repos(host, ws_abs)
-        names = {w["name"] for w in list_worktrees(host, ws_abs)}
-        if name not in names:
-            raise SystemExit(f"No worktree '{name}'.")
-        remove_worktree(host, ws_abs, name, repos)
-        print(f"Removed worktree '{name}' from {label}.")
+    elif action in {"retire", "rm"}:
+        try:
+            preview = worktrees.preview_retirement(
+                host, ws_abs, repo, name
+            )
+        except worktrees.WorktreeError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(f"Retiring {repo}:{name}")
+        print(
+            f"  branch: {preview.entry.branch or '(detached)'} "
+            "(preserved)"
+        )
+        print(f"  checkout: {preview.entry.path}")
+        print(f"  state: {'dirty' if preview.dirty else 'clean'}")
+        if preview.dirty and not getattr(args, "discard", False):
+            raise SystemExit(
+                "Worktree has uncommitted files; preserve them or re-run "
+                "with --discard --yes."
+            )
+        if not getattr(args, "yes", False):
+            raise SystemExit("Re-run with --yes to retire this worktree.")
+        try:
+            worktrees.retire_repository_worktree(
+                host,
+                ws_abs,
+                repo,
+                preview,
+                discard=getattr(args, "discard", False),
+            )
+        except worktrees.WorktreeError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(f"Retired {repo}:{name}; branch preserved.")
 
     else:
-        raise SystemExit(f"Unknown wt action '{action}'. Use new|ls|cd|rm.")
+        raise SystemExit(
+            f"Unknown wt action '{action}'. "
+            "Use new|ls|cd|retire|rm|fanout."
+        )
 
 
 def cmd_iterm(args, config):
@@ -2533,7 +2650,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt new-project <track>.<domain>.<workspace>")
         print("  tt retire <workspace> --yes")
         print("  tt workspaces check [--fix] [--registered]")
-        print("  tt wt new|ls|cd|rm <name> [-w WORKSPACE]")
+        print("  tt wt new|ls|cd|retire <name> [-r REPO] [-w WORKSPACE]")
         print("  tt wt fanout <N> <prompt…>")
         print("  tt repos [--all]")
         print("  tt code <repo|workspace> [--theme THEME] [--tag repo=tag]")
@@ -2681,8 +2798,12 @@ def main(argv: list[str] | None = None) -> int:
         wp = argparse.ArgumentParser(prog="tt wt", add_help=False)
         wp.add_argument("action", nargs="?", default="ls")
         wp.add_argument("name", nargs="?", default=None)
-        wp.add_argument("rest", nargs=argparse.REMAINDER)
+        wp.add_argument("rest", nargs="*")
         wp.add_argument("-w", "--workspace", default=None)
+        wp.add_argument("-r", "--repo", default=None)
+        wp.add_argument("--retired", action="store_true")
+        wp.add_argument("--yes", action="store_true")
+        wp.add_argument("--discard", action="store_true")
         wargs = wp.parse_args(argv[1:])
         cmd_wt(wargs, config)
 
