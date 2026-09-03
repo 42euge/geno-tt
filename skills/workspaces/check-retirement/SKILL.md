@@ -35,16 +35,18 @@ Inspect without repairing anything:
 
 1. Verify that the source is a canonical active workspace and that the
    graveyard destination does not already exist.
-2. Run `tt -H <host> wt -w <workspace> ls`. Any whole-workspace worktree is a
-   blocker, even when clean, because retirement would move its Git metadata and
-   working directory while it is still registered.
-3. Enumerate every top-level repository in the workspace, excluding `.wt`.
+2. Run `tt -H <host> wt ls -w <workspace>`. Any active managed or external
+   worktree is a blocker, even when clean, because retirement would move its
+   Git metadata or primary repository while it is still registered.
+3. Enumerate every top-level repository in the workspace, excluding hidden
+   metadata and legacy `.wt` storage.
    Treat TT-managed overlay and agent-context files as expected. Inventory any
    other non-repository content and report unclear ownership for review rather
    than ignoring it.
 4. In every repository, inspect all working trees and all local branches:
-   - any linked Git worktree beyond the primary checkout is a blocker, even if
-     it is outside `.wt`, because moving the repository can break its link;
+   - any linked Git worktree beyond the primary checkout is a blocker,
+     regardless of whether `tt wt ls` labels it managed or external, because
+     moving the repository can break its link;
    - any staged, unstaged, or untracked file is a blocker;
    - any merge, rebase, cherry-pick, revert, or bisect in progress is a blocker;
    - a detached or unborn `HEAD` needs review;

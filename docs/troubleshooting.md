@@ -190,20 +190,27 @@ Run it from inside a canonical workspace with a born stamp, or name the
 workspace explicitly:
 
 ```bash
-tt wt -w better-docs ls
-tt -H build wt -w better-docs ls
+tt wt ls -w better-docs
+tt -H build wt ls -w better-docs
 ```
-
-For a named workspace, `-w` currently must precede the worktree action.
 
 Directories without `.YYYY.qN` are not valid workspace targets for worktree
 commands, even if a broad repository glob can list their repos.
 
+When `new`, `cd`, `retire`, or `fanout` targets a workspace containing multiple
+repositories, run it from inside the intended local repository or add
+`--repo <name>`. Remote multi-repository mutations always need `--repo`.
+
 ## Worktree removal and cleanup safety
 
-`tt wt rm` invokes forced Git worktree removal for every repository and then
-removes the shared `.wt/<name>` directory. Commit or otherwise preserve wanted
-changes before running it.
+`tt wt retire <name>` is a preview: it prints the checkout, preserved branch,
+and clean/dirty state, then asks you to re-run with `--yes`. Dirty worktrees are
+blocked. Commit or otherwise preserve wanted files, or explicitly abandon them
+with `--discard --yes`.
+
+`tt wt rm` is a compatibility alias for the same safe retirement flow. Neither
+command deletes the branch. Use `tt wt ls --retired` to see history recorded in
+the workspace's hidden `.tt/retired-worktrees.jsonl` file.
 
 `tt tmux kill` and `tt tmux clean` display a confirmation prompt when they can
 remove multiple sessions. Read the resolved targets before confirming.

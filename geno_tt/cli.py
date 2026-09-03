@@ -69,9 +69,8 @@ _BOLD = "\033[1m"
 _DIM = "\033[2m"
 
 # Scheme: ~/code/<track>/<domain>/<workspace>.<born>/<repo>
-# A workspace holds 1..N repos. Whole-workspace worktrees live in a hidden
-# .wt/<name>/<repo> inside the workspace (collapsed; never scanned).
-WT_DIR = ".wt"
+# A workspace holds 1..N repos. Managed worktrees live in sibling
+# <repo>.worktrees/<name> containers and are discovered through Git.
 # Each track maps to an ANSI code (reusing _COLOR_CODES values).
 _TRACK_COLORS = {
     "crit": _COLOR_CODES["red"],
@@ -804,8 +803,8 @@ def _graveyard_destination(home: str, workspace: str) -> str:
 def _detect_workspace() -> str | None:
     """If cwd is inside a scheme workspace, return the workspace container path.
 
-    Matches the workspace dir even when standing in a repo or a .wt worktree
-    under it: .../code/<track>/<domain>/<ws>.<born>.
+    Matches the workspace dir even when standing in a primary, managed, or
+    external worktree beneath it: .../code/<track>/<domain>/<ws>.<born>.
     """
     match = _schema().match_workspace(str(Path.cwd()))
     return match.root if match else None
