@@ -132,6 +132,37 @@ def test_repo_discovery_ignores_graveyard_paths(tmp_path):
     assert [repo["path"] for repo in repos] == [str(active)]
 
 
+def test_count_worktrees_includes_sibling_and_legacy_layouts(tmp_path):
+    workspace = tmp_path / "demo.2026.q3"
+    (workspace / "api.worktrees" / "one").mkdir(parents=True)
+    (workspace / "worker.worktrees" / "two").mkdir(parents=True)
+    (workspace / ".wt" / "legacy").mkdir(parents=True)
+
+    assert remote.count_worktrees(
+        "localhost", [str(workspace)]
+    ) == {str(workspace): 3}
+
+
+def test_remote_count_checks_sibling_and_legacy_globs(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        remote.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append(argv)
+        or subprocess.CompletedProcess(
+            [], 0, "2 /home/dev/demo.2026.q3\n", ""
+        ),
+    )
+
+    remote.count_worktrees(
+        "build.example.com", ["/home/dev/demo.2026.q3"]
+    )
+
+    command = calls[0][-1]
+    assert "*.worktrees/*/" in command
+    assert ".wt/*/" in command
+
+
 def test_retire_requires_explicit_confirmation(monkeypatch):
     monkeypatch.setattr(
         cli,

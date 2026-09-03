@@ -81,10 +81,19 @@ def parse_worktree_porcelain(
             branch = branch.removeprefix("refs/heads/")
         checkout = PurePosixPath(path)
         is_managed = checkout.parent == container
+        entry_name = checkout.name
+        if not is_managed:
+            try:
+                relative = checkout.relative_to(PurePosixPath(workspace))
+            except ValueError:
+                pass
+            else:
+                if len(relative.parts) >= 3 and relative.parts[0] == ".wt":
+                    entry_name = relative.parts[1]
         entries.append(
             WorktreeEntry(
                 repo=repo,
-                name=checkout.name,
+                name=entry_name,
                 path=path,
                 branch=branch,
                 head=fields.get("HEAD"),
@@ -170,7 +179,11 @@ def create_repository_worktree(
         argv.extend([target, branch])
     else:
         argv.extend(["-b", branch, target])
-    _checked(hostname, argv)
+    try:
+        _checked(hostname, argv)
+    except WorktreeError:
+        _remove_empty_managed_container(hostname, workspace, repo)
+        raise
     return target
 
 

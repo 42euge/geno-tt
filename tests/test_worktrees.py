@@ -40,6 +40,32 @@ def test_parse_porcelain_classifies_managed_and_external(tmp_path):
     ]
 
 
+def test_parse_porcelain_keeps_legacy_worktree_name(tmp_path):
+    workspace = tmp_path / "demo.2026.q3"
+    primary = workspace / "geno-tt"
+    legacy = workspace / ".wt" / "macos-app" / "geno-tt"
+    text = (
+        f"worktree {primary}\nHEAD aaa\nbranch refs/heads/main\n\n"
+        f"worktree {legacy}\nHEAD bbb\n"
+        "branch refs/heads/wt/macos-app\n\n"
+    )
+
+    entries = worktrees.parse_worktree_porcelain(
+        text, str(workspace), "geno-tt"
+    )
+
+    assert entries == [
+        worktrees.WorktreeEntry(
+            repo="geno-tt",
+            name="macos-app",
+            path=str(legacy),
+            branch="wt/macos-app",
+            head="bbb",
+            managed=False,
+        )
+    ]
+
+
 def _git(*args, cwd):
     return subprocess.run(
         ["git", *args],
@@ -104,6 +130,17 @@ def test_create_reopens_existing_branch_without_reset(tmp_path):
         "wt/retirement"
     )
     assert _git("rev-parse", "HEAD", cwd=created).stdout.strip() == original
+
+
+def test_failed_creation_does_not_leave_empty_active_container(tmp_path):
+    workspace, _repo = _repository(tmp_path)
+
+    with pytest.raises(worktrees.WorktreeError):
+        worktrees.create_repository_worktree(
+            "localhost", str(workspace), "geno-tt", "not a git branch"
+        )
+
+    assert not (workspace / "geno-tt.worktrees").exists()
 
 
 def test_remote_creation_quotes_paths(monkeypatch):
