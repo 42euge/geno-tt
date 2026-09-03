@@ -195,8 +195,8 @@ outside the canonical layout and always opens a new VS Code window.
 
 For a canonical workspace target, locally or over SSH, it creates or refreshes:
 
-- `<workspace>.code-workspace`, with the workspace root followed by each
-  top-level Git repository; and
+- `<workspace>.code-workspace`, with the workspace root followed by every Git
+  repository below its non-hidden folders; and
 - `AGENTS.md`, whose generated section records the workspace and repo list
   while preserving a hand-written `## Local context` section; and
 - `CLAUDE.md -> AGENTS.md`, a relative symlink giving Claude the same context.
@@ -208,8 +208,10 @@ overwrite.
 
 `--theme` must exactly match a label from `--list-themes`. Repeat `--tag` to add
 a display-only suffix to repository names in the VS Code workspace, for example
-`--tag api=staging`. Later reconciliations preserve those suffixes and the
-existing valid theme when the options are omitted.
+`--tag api=staging`. A workspace-relative key such as
+`--tag services/api=staging` disambiguates duplicate leaf names. Later
+reconciliations preserve those suffixes and the existing valid theme when the
+options are omitted.
 
 `--list-open` and `--sync` open nothing. Both discover all live VS Code windows
 and replace only the registry's `vscode` attachments in
@@ -244,9 +246,11 @@ multi-repository workspace root and a multi-repository remote workspace require
 repository basename.
 
 `new` creates branch `wt/<name>` and checkout
-`<workspace>/<repo>.worktrees/<name>`. When that branch already exists and is
-not checked out elsewhere, `new` reopens it without resetting it. `cd` changes
-the local shell to the selected checkout; for a remote host it prints the path.
+beside the selected repository at
+`<workspace>/<grouping-path>/<repo>.worktrees/<name>`. When that branch already
+exists and is not checked out elsewhere, `new` reopens it without resetting
+it. `cd` changes the local shell to the selected checkout; for a remote host it
+prints the path.
 
 `retire` first prints the exact checkout, branch, and clean/dirty state. Without
 `--yes` it makes no changes. A confirmed clean retirement removes the checkout,

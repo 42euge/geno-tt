@@ -324,10 +324,16 @@ class WorkspaceSchema:
         return _render(self.repository_template, {"repo": "*"})
 
     def repository_from_relative(self, path: str) -> str | None:
+        """Return the logical repo name for a workspace-relative repo path.
+
+        Repositories may be grouped below extra directories in a workspace.
+        The configured repository template still controls the checkout's leaf
+        shape (for example ``src-{repo}``).
+        """
         pattern = _regex_template(
             self.repository_template, {"repo": r"(?P<repo>[^/]+)"},
         )
-        match = re.fullmatch(pattern, path.strip("/"))
+        match = re.fullmatch(rf"(?:[^/]+/)*{pattern}", path.strip("/"))
         return match.group("repo") if match else None
 
     def workspace_file(self, match: WorkspaceMatch) -> str:
@@ -341,11 +347,17 @@ class WorkspaceSchema:
         }
 
     def repository_folder(
-        self, match: WorkspaceMatch, repo: str, tag: str | None
+        self,
+        match: WorkspaceMatch,
+        repo: str,
+        tag: str | None,
+        *,
+        repository_path: str | None = None,
     ) -> dict[str, str]:
+        relative = repository_path or self.repository_relative(repo)
         values = self.values(match) | {
             "repo": repo,
-            "repository_path": self.repository_relative(repo),
+            "repository_path": relative,
             "tag_suffix": f"{self.tag_separator}{tag}" if tag else "",
         }
         return {
@@ -429,11 +441,8 @@ class WorkspaceSchema:
         if workspace is None:
             return None
         remainder = path[len(workspace.root):].lstrip("/")
-        repo_pattern = _regex_template(
-            self.repository_template, {"repo": r"(?P<repo>[^/]+)"},
-        )
-        repo_match = re.match(rf"^{repo_pattern}(?:/|$)", remainder)
-        if not repo_match:
+        repo = self.repository_from_relative(remainder)
+        if repo is None:
             return None
         return {
             "track": workspace.track,
@@ -441,7 +450,8 @@ class WorkspaceSchema:
             "workspace": workspace.workspace,
             "workspace_born": workspace.workspace_born,
             "born": workspace.born,
-            "repo": repo_match.group("repo"),
+            "repo": repo,
+            "repository_path": remainder.strip("/"),
         }
 
 
@@ -595,10 +605,10 @@ def _schema_from_data(data: Mapping[str, Any], source: Path) -> WorkspaceSchema:
     if (
         repo_path.is_absolute()
         or ".." in repo_path.parts
-        or len(repo_path.parts) != 1
+        or not repo_path.parts
     ):
         raise WorkspaceSchemaError(
-            f"{source}: layout.repository must be one safe top-level directory"
+            f"{source}: layout.repository must be a safe relative directory"
         )
     sample_match = schema.match_workspace(sample)
     if sample_match is None:

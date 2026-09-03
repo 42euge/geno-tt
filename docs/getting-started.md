@@ -78,8 +78,8 @@ tt -H build tmux ls
 ## 3. Configure repository discovery
 
 `tt inv`, `tt repos`, and name/index target resolution scan the glob patterns in
-the top-level `repo_dirs` setting. The canonical layout places repositories four
-levels below `~/code`, so use:
+the top-level `repo_dirs` setting. The canonical layout places repositories or
+their first grouping folder four levels below `~/code`, so use:
 
 ```toml
 default_host = "local"
@@ -93,10 +93,10 @@ build = "build.example.com"
 The second pattern keeps legacy `~/code-<color>/<repo>` directories visible
 during a transition. Remove it if you do not have legacy directories.
 
-The current built-in fallback is `~/code*/*/`, which covers the legacy layout
-but is too shallow for canonical workspaces. Keep `repo_dirs` explicit until
-that default is corrected. See [Configuration](configuration.md) for the full
-file format.
+When a match is a grouping folder such as `services/`, TT recursively discovers
+the Git repositories below it while skipping hidden directories such as `.wt`.
+These two patterns are also the built-in default. See
+[Configuration](configuration.md) for the full file format.
 
 ## 4. Create a workspace
 
@@ -169,9 +169,10 @@ tt wt new docs-pass
 
 ```text
 <workspace>/
-├── <repo>/
-└── <repo>.worktrees/
-    └── docs-pass/
+└── services/
+    ├── <repo>/
+    └── <repo>.worktrees/
+        └── docs-pass/
 ```
 
 From a multi-repository workspace root, select the owner explicitly with

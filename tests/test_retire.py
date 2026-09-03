@@ -1,7 +1,9 @@
 """Workspace retirement behavior."""
 
 import argparse
+import json
 import subprocess
+import sys
 
 import pytest
 
@@ -138,35 +140,94 @@ def test_repo_discovery_ignores_graveyard_paths(tmp_path):
     assert [repo["path"] for repo in repos] == [str(active)]
 
 
+def test_repo_discovery_descends_through_workspace_grouping_folders(tmp_path):
+    workspace = _workspace(tmp_path)
+    nested = workspace / "services" / "worker"
+    (nested / ".git").mkdir(parents=True)
+    pattern = str(workspace / "*")
+
+    repos = remote._list_local_repos(
+        [pattern], "localhost", write_cache=False,
+    )
+
+    assert [repo["path"] for repo in repos] == [
+        str(workspace / "geno-demo"),
+        str(nested),
+    ]
+
+
+def test_workspace_repo_discovery_preserves_nested_relative_paths(tmp_path):
+    workspace = _workspace(tmp_path)
+    (workspace / "services" / "worker" / ".git").mkdir(parents=True)
+    (workspace / ".wt" / "draft" / "ignored" / ".git").mkdir(parents=True)
+    (
+        workspace
+        / "services"
+        / "worker.worktrees"
+        / "review"
+        / ".git"
+    ).mkdir(parents=True)
+
+    assert remote.list_workspace_repos("localhost", str(workspace)) == [
+        "geno-demo",
+        "services/worker",
+    ]
+
+
 def test_count_worktrees_includes_sibling_and_legacy_layouts(tmp_path):
     workspace = tmp_path / "demo.2026.q3"
     (workspace / "api.worktrees" / "one").mkdir(parents=True)
     (workspace / "worker.worktrees" / "two").mkdir(parents=True)
+    (
+        workspace / "services" / "worker.worktrees" / "nested"
+    ).mkdir(parents=True)
     (workspace / ".wt" / "legacy").mkdir(parents=True)
 
     assert remote.count_worktrees(
         "localhost", [str(workspace)]
-    ) == {str(workspace): 3}
+    ) == {str(workspace): 4}
 
 
-def test_remote_count_checks_sibling_and_legacy_globs(monkeypatch):
+def test_remote_count_batches_workspace_paths(monkeypatch):
     calls = []
+    workspace = "/home/dev/demo.2026.q3"
     monkeypatch.setattr(
         remote.subprocess,
         "run",
         lambda argv, **kwargs: calls.append(argv)
         or subprocess.CompletedProcess(
-            [], 0, "2 /home/dev/demo.2026.q3\n", ""
+            [], 0, json.dumps({workspace: 2}), ""
         ),
     )
 
-    remote.count_worktrees(
-        "build.example.com", ["/home/dev/demo.2026.q3"]
-    )
+    result = remote.count_worktrees("build.example.com", [workspace])
 
     command = calls[0][-1]
-    assert "*.worktrees/*/" in command
-    assert ".wt/*/" in command
+    assert result == {workspace: 2}
+    assert "python3 -c" in command
+    assert workspace in command
+
+
+def test_remote_worktree_count_script_handles_nested_containers(tmp_path):
+    workspace = tmp_path / "demo.2026.q3"
+    (workspace / "services" / "api.worktrees" / "review").mkdir(
+        parents=True
+    )
+    (workspace / ".wt" / "legacy").mkdir(parents=True)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            remote._REMOTE_WORKTREE_COUNT_SCRIPT,
+            json.dumps([str(workspace)]),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {str(workspace): 2}
 
 
 def test_retire_requires_explicit_confirmation(monkeypatch):

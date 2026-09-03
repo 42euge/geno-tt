@@ -290,6 +290,75 @@ def list_workspace_paths(hostname: str, tracks: tuple[str, ...]) -> list[str]:
     return sorted(line for line in result.stdout.splitlines() if line)
 
 
+def _count_worktrees_below(root: Path) -> int:
+    """Count managed checkouts below grouping folders plus legacy groups."""
+    legacy = root / ".wt"
+    count = (
+        sum(1 for path in legacy.iterdir() if path.is_dir())
+        if legacy.is_dir()
+        else 0
+    )
+    if not root.is_dir():
+        return count
+    for current, directories, _files in os.walk(root):
+        path = Path(current)
+        if path != root and (path / ".git").exists():
+            directories[:] = []
+            continue
+        containers = [
+            name for name in directories if name.endswith(".worktrees")
+        ]
+        for name in containers:
+            count += sum(
+                1 for child in (path / name).iterdir() if child.is_dir()
+            )
+        directories[:] = sorted(
+            name
+            for name in directories
+            if not name.startswith(".") and not name.endswith(".worktrees")
+        )
+    return count
+
+
+_REMOTE_WORKTREE_COUNT_SCRIPT = r'''
+import json
+import os
+from pathlib import Path
+import sys
+
+counts = {}
+for workspace in json.loads(sys.argv[1]):
+    root = Path(workspace)
+    legacy = root / ".wt"
+    count = (
+        sum(1 for path in legacy.iterdir() if path.is_dir())
+        if legacy.is_dir()
+        else 0
+    )
+    if root.is_dir():
+        for current, directories, _files in os.walk(root):
+            path = Path(current)
+            if path != root and (path / ".git").exists():
+                directories[:] = []
+                continue
+            containers = [
+                name for name in directories if name.endswith(".worktrees")
+            ]
+            for name in containers:
+                count += sum(
+                    1 for child in (path / name).iterdir() if child.is_dir()
+                )
+            directories[:] = sorted(
+                name
+                for name in directories
+                if not name.startswith(".")
+                and not name.endswith(".worktrees")
+            )
+    counts[workspace] = count
+print(json.dumps(counts))
+'''
+
+
 def count_worktrees(hostname: str, ws_abs_paths: list[str]) -> dict:
     """Count managed sibling checkouts and legacy worktree groups.
 
@@ -303,45 +372,27 @@ def count_worktrees(hostname: str, ws_abs_paths: list[str]) -> dict:
         out = {}
         for ws in ws_abs_paths:
             try:
-                root = Path(ws)
-                legacy = root / ".wt"
-                count = (
-                    sum(1 for path in legacy.iterdir() if path.is_dir())
-                    if legacy.is_dir()
-                    else 0
-                )
-                for container in root.glob("*.worktrees"):
-                    if container.is_dir():
-                        count += sum(
-                            1 for path in container.iterdir() if path.is_dir()
-                        )
-                out[ws] = count
+                out[ws] = _count_worktrees_below(Path(ws))
             except OSError:
                 out[ws] = 0
         return out
     import shlex
-    # One line per workspace: "<count> <ws>"
-    parts = []
-    for ws in ws_abs_paths:
-        quoted = shlex.quote(ws)
-        listing = (
-            f"{{ ls -1d {quoted}/*.worktrees/*/ 2>/dev/null; "
-            f"ls -1d {quoted}/.wt/*/ 2>/dev/null; }}"
-        )
-        parts.append(
-            f"printf '%s %s\\n' \"$({listing} | wc -l | tr -d ' ')\" "
-            f"{quoted}"
-        )
+    command = " ".join((
+        "python3 -c",
+        shlex.quote(_REMOTE_WORKTREE_COUNT_SCRIPT),
+        shlex.quote(json.dumps(ws_abs_paths)),
+    ))
     result = subprocess.run(
-        ["ssh", hostname, "; ".join(parts)],
+        ["ssh", hostname, command],
         capture_output=True, text=True, timeout=10,
     )
-    out = {ws: 0 for ws in ws_abs_paths}
-    for line in result.stdout.strip().splitlines():
-        bits = line.split(" ", 1)
-        if len(bits) == 2 and bits[0].isdigit():
-            out[bits[1]] = int(bits[0])
-    return out
+    if result.returncode != 0:
+        return {ws: 0 for ws in ws_abs_paths}
+    try:
+        counts = json.loads(result.stdout)
+    except (TypeError, ValueError):
+        return {ws: 0 for ws in ws_abs_paths}
+    return {ws: int(counts.get(ws, 0)) for ws in ws_abs_paths}
 
 
 def scaffold_project(hostname: str, rel_path: str) -> str:
@@ -412,31 +463,67 @@ def move_workspace(hostname: str, source: str, destination: str) -> None:
         raise RuntimeError(detail or f"Could not retire workspace on {hostname}.")
 
 
-def list_workspace_repos(hostname: str, ws_abs: str) -> list[str]:
-    """Return git-repo subdir names directly inside a workspace (local or remote).
+def _git_repositories_below(root: Path, *, include_root: bool) -> list[Path]:
+    """Return Git checkout roots below ``root`` without entering checkouts."""
+    if not root.is_dir():
+        return []
+    repositories = []
+    for current, directories, _files in os.walk(root):
+        directories[:] = sorted(
+            name
+            for name in directories
+            if not name.startswith(".") and not name.endswith(".worktrees")
+        )
+        path = Path(current)
+        if (include_root or path != root) and (path / ".git").exists():
+            repositories.append(path)
+            directories[:] = []
+    return repositories
 
-    Skips hidden metadata, legacy worktree storage, sibling worktree
-    containers, and non-Git directories.
+_REMOTE_WORKSPACE_REPOS_SCRIPT = r'''
+import os
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+if root.is_dir():
+    for current, directories, _files in os.walk(root):
+        directories[:] = sorted(
+            name
+            for name in directories
+            if not name.startswith(".") and not name.endswith(".worktrees")
+        )
+        path = Path(current)
+        if path == root or not (path / ".git").exists():
+            continue
+        print(path.relative_to(root).as_posix())
+        directories[:] = []
+'''
+
+
+def list_workspace_repos(hostname: str, ws_abs: str) -> list[str]:
+    """Return workspace-relative paths for all Git repos (local or remote).
+
+    Repositories may be nested below grouping folders. Hidden directories,
+    including legacy ``.wt`` storage, are not traversed. Non-Git directories
+    are ignored.
     """
     if _is_local(hostname):
-        out = []
         ws = Path(ws_abs)
-        if not ws.is_dir():
-            return out
-        for d in sorted(ws.iterdir()):
-            if not d.is_dir() or d.name.startswith("."):
-                continue
-            if (d / ".git").exists():
-                out.append(d.name)
-        return out
+        return [
+            path.relative_to(ws).as_posix()
+            for path in _git_repositories_below(ws, include_root=False)
+        ]
     import shlex
-    # `*/` skips dotfiles; sibling containers lack a .git entry at their root.
-    script = (
-        f'for d in {shlex.quote(ws_abs)}/*/; do '
-        '[ -e "${d%/}/.git" ] && basename "${d%/}"; done'
-    )
+    script = " ".join((
+        "python3 -c",
+        shlex.quote(_REMOTE_WORKSPACE_REPOS_SCRIPT),
+        shlex.quote(ws_abs),
+    ))
     result = _ssh_run(hostname, script)
-    return [ln for ln in result.stdout.strip().splitlines() if ln]
+    return sorted(
+        line for line in result.stdout.strip().splitlines() if line
+    )
 
 
 def list_repos(hostname: str, config: dict | None = None, write_cache: bool = True) -> list[dict]:
@@ -464,19 +551,22 @@ def _list_local_repos(
     repos = []
     seen: set[str] = set()
     for pattern in repo_dirs:
-        for path in sorted(_glob.glob(os.path.expanduser(pattern))):
-            path = path.rstrip("/")
-            if path in seen or _is_graveyard_path(path):
-                continue
-            seen.add(path)
-            try:
-                timestamp = datetime.fromtimestamp(
-                    os.stat(path).st_atime,
-                    tz=timezone.utc,
-                ).isoformat()
-            except OSError:
-                timestamp = "unknown"
-            repos.append({"path": path, "last_accessed": timestamp})
+        for candidate_text in sorted(_glob.glob(os.path.expanduser(pattern))):
+            candidate = Path(candidate_text.rstrip("/"))
+            discovered = _git_repositories_below(candidate, include_root=True)
+            for repository in discovered or [candidate]:
+                path = str(repository).rstrip("/")
+                if path in seen or _is_graveyard_path(path):
+                    continue
+                seen.add(path)
+                try:
+                    timestamp = datetime.fromtimestamp(
+                        os.stat(path).st_atime,
+                        tz=timezone.utc,
+                    ).isoformat()
+                except OSError:
+                    timestamp = "unknown"
+                repos.append({"path": path, "last_accessed": timestamp})
 
     repos.sort(key=lambda repo: repo["path"])
     if write_cache:
@@ -623,6 +713,7 @@ def clone_repos(hostname: str, ws_abs: str, urls: dict) -> list[tuple]:
             if (dest / ".git").exists():
                 out.append((name, "skip"))
                 continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
             procs.append((name, subprocess.Popen(
                 ["git", "clone", "-q", url, str(dest)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)))
@@ -637,7 +728,11 @@ def clone_repos(hostname: str, ws_abs: str, urls: dict) -> list[tuple]:
     lines = [f"mkdir -p {shlex.quote(ws_abs)}"]
     for name, url in urls.items():
         d = shlex.quote(f"{ws_abs}/{name}")
-        lines.append(f'[ -d {d}/.git ] || git clone -q {shlex.quote(url)} {d}')
+        parent = shlex.quote(str(Path(f"{ws_abs}/{name}").parent))
+        lines.append(
+            f'[ -d {d}/.git ] || {{ mkdir -p {parent} && '
+            f'git clone -q {shlex.quote(url)} {d}; }}'
+        )
     lines.append(f'ls -d {shlex.quote(ws_abs)}/*/ 2>/dev/null | wc -l')
     res = _ssh_run(hostname, "\n".join(lines))
     return [(n, "remote") for n in urls]

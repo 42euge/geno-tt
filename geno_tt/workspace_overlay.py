@@ -137,13 +137,19 @@ def _local_snapshot(workspace: str, schema: WorkspaceSchema) -> _Snapshot:
     if not root.is_dir():
         raise WorkspaceOverlayError(f"Workspace does not exist: {workspace}")
     repos = []
-    for child in root.glob(schema.repository_glob()):
-        if not child.is_dir() or not (child / ".git").exists():
+    for current, directories, _files in os.walk(root):
+        directories[:] = sorted(
+            name
+            for name in directories
+            if not name.startswith(".") and not name.endswith(".worktrees")
+        )
+        child = Path(current)
+        if child == root or not (child / ".git").exists():
             continue
+        directories[:] = []
         relative = child.relative_to(root).as_posix()
-        repo = schema.repository_from_relative(relative)
-        if repo is not None and not repo.startswith("."):
-            repos.append(repo)
+        if schema.repository_from_relative(relative) is not None:
+            repos.append(relative)
     try:
         files = {
             path.name: path.read_text()
@@ -169,14 +175,21 @@ from pathlib import Path
 import sys
 
 root = Path(sys.argv[1])
-repo_glob = sys.argv[2]
-agent_names = json.loads(sys.argv[3])
+agent_names = json.loads(sys.argv[2])
 if not root.is_dir():
     raise SystemExit(f"workspace does not exist: {root}")
-repo_paths = sorted(
-    child.relative_to(root).as_posix() for child in root.glob(repo_glob)
-    if child.is_dir() and not child.name.startswith(".") and (child / ".git").exists()
-)
+repo_paths = []
+for current, directories, _files in os.walk(root):
+    directories[:] = sorted(
+        name
+        for name in directories
+        if not name.startswith(".") and not name.endswith(".worktrees")
+    )
+    child = Path(current)
+    if child == root or not (child / ".git").exists():
+        continue
+    repo_paths.append(child.relative_to(root).as_posix())
+    directories[:] = []
 files = {path.name: path.read_text() for path in sorted(root.glob("*.code-workspace"))}
 agent_files = {}
 for name in agent_names:
@@ -261,7 +274,6 @@ def _remote_snapshot(
             _remote_command(
                 _REMOTE_SNAPSHOT_SCRIPT,
                 workspace,
-                schema.repository_glob(),
                 json.dumps([
                     schema.agent_file,
                     *schema.agent_symlinks,
@@ -281,13 +293,15 @@ def _remote_snapshot(
     try:
         data = json.loads(result.stdout)
         if "repo_paths" in data:
-            repos = tuple(sorted(filter(None, (
-                schema.repository_from_relative(path)
-                for path in data["repo_paths"]
-            ))))
+            repos = tuple(sorted(
+                path for path in data["repo_paths"]
+                if schema.repository_from_relative(path) is not None
+            ))
         else:
             # Compatibility with older remote test/probe payloads.
-            repos = tuple(data["repos"])
+            repos = tuple(
+                schema.repository_relative(repo) for repo in data["repos"]
+            )
         agent_files = {
             name: _FileState(
                 state["kind"],
@@ -352,17 +366,28 @@ def _select_workspace_file(
 def _tag_from_entry(
     entry: object,
     repo: str,
+    repository_path: str,
     schema: WorkspaceSchema,
     match: WorkspaceMatch,
 ) -> str | None:
     if not isinstance(entry, dict):
         return None
-    base = schema.repository_folder(match, repo, None)
+    base = schema.repository_folder(
+        match,
+        repo,
+        None,
+        repository_path=repository_path,
+    )
     if entry.get("path") != base["path"]:
         return None
     name = entry.get("name")
     sentinel = "TTTAGVALUE"
-    tagged_name = schema.repository_folder(match, repo, sentinel)["name"]
+    tagged_name = schema.repository_folder(
+        match,
+        repo,
+        sentinel,
+        repository_path=repository_path,
+    )["name"]
     prefix, suffix = tagged_name.split(sentinel, 1)
     if (
         isinstance(name, str)
@@ -488,11 +513,38 @@ def reconcile_workspace(
         if hostname == LOCAL_HOSTNAME
         else _remote_snapshot(hostname, workspace_text, loaded_schema, runner)
     )
-    repos = tuple(sorted(set(snapshot.repos) | set(seed_repos)))
-    unknown_tags = sorted(set(tags or {}) - set(repos))
+    seeded_paths = {
+        loaded_schema.repository_relative(repo) for repo in seed_repos
+    }
+    repos = tuple(sorted(set(snapshot.repos) | seeded_paths))
+    repo_names = {
+        path: loaded_schema.repository_from_relative(path) for path in repos
+    }
+    paths_by_name: dict[str, list[str]] = {}
+    for path, repo_name in repo_names.items():
+        if repo_name is not None:
+            paths_by_name.setdefault(repo_name, []).append(path)
+
+    normalized_tags = {}
+    unknown_tags = []
+    ambiguous_tags = []
+    for key, tag in (tags or {}).items():
+        if key in repo_names:
+            normalized_tags[key] = tag
+        elif len(paths_by_name.get(key, ())) == 1:
+            normalized_tags[paths_by_name[key][0]] = tag
+        elif len(paths_by_name.get(key, ())) > 1:
+            ambiguous_tags.append(key)
+        else:
+            unknown_tags.append(key)
     if unknown_tags:
         raise WorkspaceOverlayError(
-            f"Tags name unknown workspace repo(s): {', '.join(unknown_tags)}"
+            f"Tags name unknown workspace repo(s): {', '.join(sorted(unknown_tags))}"
+        )
+    if ambiguous_tags:
+        raise WorkspaceOverlayError(
+            "Tags use ambiguous repo name(s); use workspace-relative paths: "
+            + ", ".join(sorted(ambiguous_tags))
         )
     for repo, tag in (tags or {}).items():
         if not tag or not _SAFE_TAG_RE.fullmatch(tag):
@@ -540,21 +592,42 @@ def reconcile_workspace(
 
     original_folders = data.get("folders")
     folder_entries = original_folders if isinstance(original_folders, list) else []
+    display_names = {
+        path: (
+            path
+            if len(paths_by_name.get(repo_names[path] or "", ())) > 1
+            else repo_names[path]
+        )
+        for path in repos
+    }
     preserved_tags = {}
-    for repo in repos:
+    for repository_path in repos:
+        repo = display_names[repository_path]
+        if repo is None:
+            continue
         for entry in folder_entries:
-            tag = _tag_from_entry(entry, repo, loaded_schema, workspace_match)
+            tag = _tag_from_entry(
+                entry,
+                repo,
+                repository_path,
+                loaded_schema,
+                workspace_match,
+            )
             if tag is not None:
-                preserved_tags[repo] = tag
+                preserved_tags[repository_path] = tag
                 break
-    preserved_tags.update(tags or {})
+    preserved_tags.update(normalized_tags)
 
     expected_folders = [loaded_schema.root_folder(workspace_match)]
-    for repo in repos:
+    for repository_path in repos:
+        repo = display_names[repository_path]
+        if repo is None:
+            continue
         expected_folders.append(loaded_schema.repository_folder(
             workspace_match,
             repo,
-            preserved_tags.get(repo),
+            preserved_tags.get(repository_path),
+            repository_path=repository_path,
         ))
 
     settings = data.get("settings")
@@ -596,7 +669,12 @@ def reconcile_workspace(
         snapshot,
         loaded_schema,
         workspace_match,
-        repos,
+        tuple(
+            repo_names[path]
+            if path == loaded_schema.repository_relative(repo_names[path] or "")
+            else path
+            for path in repos
+        ),
     )
     if agent_plan.conflicts:
         return OverlayResult(

@@ -115,6 +115,11 @@ recall after the remote session stops naturally. `tt recall <slug> --stop`
 terminates the remote tmux session, so require explicit confirmation. Preserve
 and report any safety stash or returned `RETURN.md` path.
 
+Repositories may live below non-hidden grouping folders in a workspace. TT
+inventory, overlays, mirroring, and repository-scoped worktree placement
+preserve each repository's workspace-relative path; do not flatten it to the
+leaf name.
+
 Workspace rules come from `~/.geno/tt/workspace-schema.yaml` with packaged
 defaults. Invalid schema input or unsafe existing files must stop before writes.
 The default schema generates workspace-root `AGENTS.md` and a relative

@@ -8,7 +8,7 @@ tmux, iTerm2, VS Code, or SSH; it gives them the same workspace and host names.
 Canonical work lives under:
 
 ```text
-~/code/<track>/<domain>/<workspace>.<born>/<repo>
+~/code/<track>/<domain>/<workspace>.<born>/<repo-path>
 ```
 
 | Part | Meaning | Example |
@@ -30,7 +30,8 @@ repositories:
 ```text
 better-docs.2026.q3/
 ├── geno-tt/
-├── geno-tools/
+├── services/
+│   └── docs-api/
 └── better-docs.code-workspace
 ```
 
@@ -45,26 +46,27 @@ first returns a verified ZIP to the source host, so remote-only changes are not
 lost when the mirror moves into its graveyard.
 
 Every workspace-management path shares one overlay schema. The workspace root
-is the first VS Code folder, each top-level repository keeps its directory name
-with an optional `-<tag>` display suffix, and the chosen installed theme is
-preserved. Creating, cloning, mirroring, or opening a workspace reconciles that
-schema; `tt workspaces check` exposes the same reconciliation without opening
-an editor. The schema is loaded from `~/.geno/tt/workspace-schema.yaml`, with a
-packaged fallback, so layout and overlay rules change in one place without
-teaching each caller new rules.
+is the first VS Code folder, and every Git repository below a non-hidden folder
+is included with its workspace-relative path and an optional `-<tag>` display
+suffix. The chosen installed theme is preserved. Creating, cloning, mirroring,
+or opening a workspace reconciles that schema; `tt workspaces check` exposes
+the same reconciliation without opening an editor. The schema is loaded from
+`~/.geno/tt/workspace-schema.yaml`, with a packaged fallback, so layout and
+overlay rules change in one place without teaching each caller new rules.
 
 ## Repository worktrees
 
 Each repository gets a clearly named sibling container for its active managed
-worktrees. The checkouts are near the primary repository without being nested
-inside it:
+worktrees. The checkouts stay near the primary repository—including repositories
+inside grouping folders—without being nested inside the checkout:
 
 ```text
 better-docs.2026.q3/
 ├── geno-tt/
 ├── geno-tt.worktrees/
 │   └── docs-pass/       # branch wt/docs-pass
-└── geno-tools/
+└── services/
+    └── docs-api/
 ```
 
 Creating `docs-pass` affects only `geno-tt`. From inside a primary checkout or

@@ -73,6 +73,39 @@ def test_fix_preserves_repo_tags_theme_and_unowned_preferences(tmp_path):
     assert (root / "CLAUDE.md").readlink().as_posix() == "AGENTS.md"
 
 
+def test_fix_discovers_repositories_in_nested_workspace_folders(tmp_path):
+    root = _workspace(
+        tmp_path,
+        repos=("services/sample-api", "clients/sample-ui"),
+    )
+    (
+        root
+        / "services"
+        / "sample-api.worktrees"
+        / "review"
+        / ".git"
+    ).mkdir(parents=True)
+
+    result = reconcile_workspace(
+        "localhost",
+        root,
+        fix=True,
+        tags={"services/sample-api": "backend"},
+        installed_themes={"Dark Modern"},
+    )
+
+    assert result.valid is True
+    data = json.loads((root / "demo.code-workspace").read_text())
+    assert data["folders"] == [
+        {"name": "demo.2026.q3", "path": "."},
+        {"name": "sample-ui", "path": "clients/sample-ui"},
+        {"name": "sample-api-backend", "path": "services/sample-api"},
+    ]
+    assert "clients/sample-ui · services/sample-api" in (
+        root / "AGENTS.md"
+    ).read_text()
+
+
 def test_explicit_preferences_override_preserved_values(tmp_path):
     root = _workspace(tmp_path, repos=("sample-api",))
     workspace_file = root / "demo.code-workspace"
@@ -248,7 +281,7 @@ class RemoteRunner:
         self.calls.append((argv, kwargs))
         if "input" not in kwargs:
             snapshot = {
-                "repos": ["sample-repo"],
+                "repo_paths": ["services/sample-repo"],
                 "workspace_files": {},
                 "agent_files": {
                     "AGENTS.md": {"kind": "missing"},
@@ -278,7 +311,7 @@ def test_remote_workspace_uses_the_same_schema_through_ssh():
     data = json.loads(runner.payload["files"]["docs.code-workspace"])
     assert data["folders"] == [
         {"name": "docs.2026.q3", "path": "."},
-        {"name": "sample-repo", "path": "sample-repo"},
+        {"name": "sample-repo", "path": "services/sample-repo"},
     ]
     assert "AGENTS.md" in runner.payload["files"]
     assert runner.payload["symlinks"] == {"CLAUDE.md": "AGENTS.md"}

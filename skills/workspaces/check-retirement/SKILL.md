@@ -38,8 +38,9 @@ Inspect without repairing anything:
 2. Run `tt -H <host> wt ls -w <workspace>`. Any active managed or external
    worktree is a blocker, even when clean, because retirement would move its
    Git metadata or primary repository while it is still registered.
-3. Enumerate every top-level repository in the workspace, excluding hidden
-   metadata and legacy `.wt` storage.
+3. Recursively enumerate every repository below non-hidden workspace folders,
+   excluding hidden metadata, legacy `.wt` storage, and managed `*.worktrees`
+   containers, and never descend into a discovered repository.
    Treat TT-managed overlay and agent-context files as expected. Inventory any
    other non-repository content and report unclear ownership for review rather
    than ignoring it.
