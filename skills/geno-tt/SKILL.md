@@ -29,7 +29,7 @@ Start with these choices:
 1. **Continue a session** — attach to work that is already running.
 2. **Open existing work** — choose a repo, then open a terminal session or VS Code.
 3. **Create a workspace** — scaffold a new workspace and its first repo.
-4. **Open a worktree** — enter an existing whole-workspace worktree.
+4. **Open or retire a worktree** — manage one repository's linked checkout.
 5. **Retire a workspace** — move a confirmed workspace into the graveyard.
 
 If the user's request already identifies one intent, begin at the next
@@ -47,8 +47,9 @@ and let the user select one. Keep the numeric repo ID because `tt new` and
 
 For sessions, run `tt -H <host> tmux ls`, then let the user select a live
 session. For worktrees, first select a workspace from
-`tt -H <host> inv --expand`, then list its worktrees with
-`tt -H <host> wt -w <workspace> ls`.
+`tt -H <host> inv --expand`, then list its repository-grouped worktrees with
+`tt -H <host> wt ls -w <workspace>`. Keep the selected repository name for
+commands that need `--repo`.
 
 ## Execute the selection
 
@@ -57,7 +58,13 @@ session. For worktrees, first select a workspace from
 - Existing repo in VS Code: `tt -H <host> code <repo-id>`
 - Create a workspace: collect `<track>.<domain>.<workspace>[.<repo>]`, then run
   `tt -H <host> new-project <spec>`
-- Enter a local worktree: `tt -H <host> wt -w <workspace> cd <name>`
+- Enter a local worktree:
+  `tt -H <host> wt cd <name> -w <workspace> --repo <repo>`
+- Retire a worktree: first run
+  `tt -H <host> wt retire <name> -w <workspace> --repo <repo>` and show the
+  preview. Only after explicit confirmation, append `--yes`. Never add
+  `--discard` unless the user explicitly authorizes losing the reported
+  uncommitted files.
 - Retire a workspace: resolve the exact workspace with
   `tt -H <host> inv --expand`, show the user what will move, and ask for
   explicit confirmation. Only then run
@@ -82,6 +89,10 @@ defaults. Invalid schema input or unsafe existing files must stop before writes.
 The default schema generates workspace-root `AGENTS.md` and a relative
 `CLAUDE.md -> AGENTS.md` symlink. Migrate only TT-managed legacy context;
 report unmanaged instruction files or conflicting links without replacing them.
+
+Worktree retirement preserves its Git branch and records the event below the
+workspace's hidden `.tt/` directory. `tt wt rm` has the same confirmation and
+dirty-file safeguards; prefer the clearer `retire` spelling.
 
 Do not run other destructive or administrative TT actions from this entry point.
 Hosts come from `~/.geno/tt/config.toml`; never hard-code them. User-facing CLI

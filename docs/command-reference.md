@@ -197,34 +197,55 @@ and replace only the registry's `vscode` attachments in
 There is no separate `tt overlay` command: `tt code` reconciles while opening,
 and `tt workspaces check --fix` reconciles existing workspaces without opening.
 
-## Whole-workspace worktrees
+## Repository worktrees
 
-Run these inside a canonical workspace, or put `-w WORKSPACE` before the
-worktree action. For a remote workspace, combine it with the global `-H` flag.
-
-```text
-tt wt ls
-tt wt new <name>
-tt wt cd <name>
-tt wt rm <name>
-tt wt fanout <count> <prompt...>
-```
-
-The parser currently requires named-workspace forms to be ordered as:
+Run these inside a canonical workspace, or select one with `-w WORKSPACE`.
+For a remote workspace, combine that option with the global `-H` flag.
 
 ```text
-tt wt -w WORKSPACE ls
-tt wt -w WORKSPACE new <name>
-tt -H HOST wt -w WORKSPACE fanout <count> <prompt...>
+tt wt ls [--retired] [-w WORKSPACE]
+tt wt new <name> [-r REPO] [-w WORKSPACE]
+tt wt cd <name> [-r REPO] [-w WORKSPACE]
+tt wt retire <name> [-r REPO] [-w WORKSPACE] [--yes] [--discard]
+tt wt rm <name> [-r REPO] [-w WORKSPACE] [--yes] [--discard]
+tt wt fanout <count> <prompt...> [-r REPO] [-w WORKSPACE]
 ```
+
+`ls` scans Git's linked-worktree inventory for every repository, groups active
+checkouts by repository, and labels checkouts outside the managed sibling
+container as `external`. `--retired` also displays hidden retirement history.
+
+Mutating commands select a repository from `--repo`, the repository containing
+the local current directory, or the workspace's only repository. A
+multi-repository workspace root and a multi-repository remote workspace require
+`--repo`. The value may be the workspace-relative repository path or a unique
+repository basename.
 
 `new` creates branch `wt/<name>` and checkout
-`<workspace>/.wt/<name>/<repo>` in every top-level Git repository. `cd` changes
-the local shell to the shared worktree root; for a remote host it prints the
-path. `rm` forcibly removes each Git worktree and the shared directory.
+`<workspace>/<repo>.worktrees/<name>`. When that branch already exists and is
+not checked out elsewhere, `new` reopens it without resetting it. `cd` changes
+the local shell to the selected checkout; for a remote host it prints the path.
+
+`retire` first prints the exact checkout, branch, and clean/dirty state. Without
+`--yes` it makes no changes. A confirmed clean retirement removes the checkout,
+preserves the branch, appends a record to
+`<workspace>/.tt/retired-worktrees.jsonl`, and removes an empty sibling
+container. Dirty worktrees are blocked unless both `--discard` and `--yes` are
+explicit. `rm` is a compatibility alias with the same safety behavior.
+
+Examples:
+
+```text
+tt wt ls --retired
+tt wt new review --repo api
+tt wt retire review --repo api
+tt wt retire review --repo api --yes
+tt -H HOST wt new review --workspace WORKSPACE --repo api
+```
 
 `fanout` creates `fanout-1` through `fanout-<count>` and starts one Claude tmux
-session in each worktree with the same optional prompt.
+session in each worktree for the selected repository with the same optional
+prompt.
 
 ## tmux sessions
 

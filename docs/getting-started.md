@@ -157,32 +157,40 @@ tt workspaces check --fix
 tt workspaces check --registered --fix  # live local iTerm/VS Code workspaces
 ```
 
-## 6. Create a whole-workspace worktree
+## 6. Create a repository worktree
 
-From anywhere inside the workspace:
+From inside a repository:
 
 ```bash
 tt wt new docs-pass
 ```
 
-If the workspace has multiple Git repositories, each receives branch
-`wt/docs-pass` and a checkout under one shared root:
+`tt` creates branch `wt/docs-pass` and a checkout in a sibling container:
 
 ```text
-<workspace>/.wt/docs-pass/<repo-a>
-<workspace>/.wt/docs-pass/<repo-b>
+<workspace>/
+├── <repo>/
+└── <repo>.worktrees/
+    └── docs-pass/
 ```
+
+From a multi-repository workspace root, select the owner explicitly with
+`tt wt new docs-pass --repo <repo>`. Existing worktrees in `.wt`, `.wt-*`, or
+other locations remain in place and appear as `external` in the listing.
 
 Useful follow-ups are:
 
 ```bash
 tt wt ls
 tt wt cd docs-pass
-tt wt rm docs-pass
+tt wt retire docs-pass       # preview only
+tt wt retire docs-pass --yes # remove a clean checkout, preserve its branch
+tt wt ls --retired
 ```
 
-`tt wt rm` removes all of those checkouts, so make sure wanted work is committed
-or otherwise preserved first.
+Retirement blocks staged, unstaged, and untracked files. To abandon those files
+deliberately, use `tt wt retire docs-pass --discard --yes`. The compatibility
+alias `tt wt rm` follows the same safety rules.
 
 ## 7. Choose the right session inventory
 

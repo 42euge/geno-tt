@@ -35,7 +35,8 @@ better-docs.2026.q3/
 ```
 
 Commands such as `tt repos`, `tt new`, and a repository-name form of `tt code`
-can target one repo. Commands such as `tt wt`, `tt mirror`, and `tt spawn`
+can target one repo. Worktree mutations also target one repo, while `tt wt ls`
+provides a workspace-wide overview. Commands such as `tt mirror` and `tt spawn`
 operate on the workspace as a unit.
 
 Every workspace-management path shares one overlay schema. The workspace root
@@ -47,24 +48,31 @@ an editor. The schema is loaded from `~/.geno/tt/workspace-schema.yaml`, with a
 packaged fallback, so layout and overlay rules change in one place without
 teaching each caller new rules.
 
-## Whole-workspace worktrees
+## Repository worktrees
 
-Normal `git worktree` operates on one repository. `tt wt` repeats the operation
-for every top-level Git repository in the workspace and keeps the results under
-one hidden root:
+Each repository gets a clearly named sibling container for its active managed
+worktrees. The checkouts are near the primary repository without being nested
+inside it:
 
 ```text
 better-docs.2026.q3/
 ├── geno-tt/
-├── geno-tools/
-└── .wt/
-    └── docs-pass/
-        ├── geno-tt/      # branch wt/docs-pass
-        └── geno-tools/   # branch wt/docs-pass
+├── geno-tt.worktrees/
+│   └── docs-pass/       # branch wt/docs-pass
+└── geno-tools/
 ```
 
-The worktree name is therefore a workspace-wide coordination key. Creating or
-removing it affects each repository in that workspace.
+Creating `docs-pass` affects only `geno-tt`. From inside a primary checkout or
+one of its worktrees, `tt` infers the repository. In a multi-repository
+workspace root or on a remote host, use `--repo`. `tt wt ls` groups all linked
+checkouts by repository and labels worktrees outside sibling containers as
+external; it never moves them automatically.
+
+Retirement removes the checkout while preserving branch `wt/<name>`. It blocks
+uncommitted files unless `--discard --yes` is explicit, records the event in
+`.tt/retired-worktrees.jsonl`, and removes an empty sibling container. This
+keeps the active directory view focused while retaining the Git history needed
+to reopen a branch later.
 
 ## Hosts
 

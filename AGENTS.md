@@ -1,6 +1,6 @@
 # geno-tt contributor guide
 
-`geno-tt` provides the `tt` CLI for code-org workspaces, whole-workspace Git
+`geno-tt` provides the `tt` CLI for code-org workspaces, repository Git
 worktrees, local iTerm2 orchestration, VS Code windows, and tmux sessions on
 configured hosts.
 
@@ -54,8 +54,11 @@ The packaged workspace schema defaults to:
 - Generated workspace instructions use `AGENTS.md` as the canonical file and a
   relative `CLAUDE.md -> AGENTS.md` symlink. Never replace unmanaged instruction
   files or conflicting links during reconciliation.
-- Whole-workspace worktrees live under `<workspace>/.wt/<name>/<repo>` and use
-  branch `wt/<name>` in every repository.
+- Managed worktrees live beside their primary repository at
+  `<workspace>/<repo>.worktrees/<name>` and use branch `wt/<name>`. Worktree
+  mutations target one repository; `tt wt ls` is the workspace-wide overview.
+- Worktree retirement preserves the branch, blocks dirty checkouts unless
+  `--discard --yes` is explicit, and appends history below `<workspace>/.tt/`.
 - Hosts come from `~/.geno/tt/config.toml`; never hard-code environment host
   aliases in source or tests. The explicit local transport is `localhost`.
 - `tt ls` means local iTerm2 inventory. Remote session inventory is

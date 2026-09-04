@@ -1,8 +1,8 @@
 # geno-tt
 
 `geno-tt` provides the `tt` command: one interface for code-org workspaces,
-whole-workspace Git worktrees, local iTerm2 and VS Code windows, and tmux
-sessions on configured hosts.
+repository Git worktrees, local iTerm2 and VS Code windows, and tmux sessions
+on configured hosts.
 
 ```text
 ~/code/<track>/<domain>/<workspace>.<born>/<repo>

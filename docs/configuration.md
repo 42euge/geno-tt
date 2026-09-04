@@ -144,8 +144,8 @@ separator, VS Code theme fallback order, and generated agent instructions.
 By default `AGENTS.md` is canonical and `CLAUDE.md` is a relative symlink to
 it, so agent-neutral and Claude-specific discovery read identical content.
 The repository template may add a prefix or suffix, such as
-`src-{repo}`. It must remain one top-level directory so mirror and whole-
-workspace worktree operations keep the same repository model.
+`src-{repo}`. It must remain one top-level directory so mirror operations and
+repository worktree sibling paths keep the same repository model.
 
 `tt` validates the complete schema before creating or repairing anything.
 Templates reject unknown or missing fields, paths must stay relative, and

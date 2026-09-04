@@ -1,8 +1,8 @@
 # geno-tt
 
-`geno-tt` is the `tt` command: one interface for code workspaces, whole-workspace
-Git worktrees, iTerm2 tabs, VS Code windows, and tmux sessions on local or remote
-hosts.
+`geno-tt` is the `tt` command: one interface for code workspaces, repository
+Git worktrees, iTerm2 tabs, VS Code windows, and tmux sessions on local or
+remote hosts.
 
 ```text
 ~/code/<track>/<domain>/<workspace>.<born>/<repo>
@@ -12,7 +12,7 @@ hosts.
 Its main jobs are:
 
 - inventory, create, and retire workspaces in the code-org layout;
-- create the same named Git worktree across every repository in a workspace;
+- create, find, enter, and safely retire repository Git worktrees;
 - open a workspace as one VS Code window and register live editor windows;
 - organize iTerm2 tabs using dot-notation names; and
 - create, find, attach to, and clean up tmux sessions across configured hosts.
@@ -108,11 +108,12 @@ tt code <repo|index|canonical-path> [--theme THEME] [--tag repo=tag]
 tt code --list-open
 tt code --sync
 
-# Whole-workspace worktrees
-tt wt new <name>
+# Repository worktrees
+tt wt new <name> [-r REPO]
 tt wt ls
-tt wt cd <name>
-tt wt rm <name>
+tt wt cd <name> [-r REPO]
+tt wt retire <name> [--discard] --yes
+tt wt ls --retired
 
 # iTerm2
 tt name
@@ -142,8 +143,8 @@ Global flags such as `-H`, `--tab`, and `--cc` go before the command. See the
 
 Agent-facing TT work starts with the guided [`$geno-tt`](skills/geno-tt/SKILL.md)
 skill. It asks the user whether to continue a session, open existing work,
-create or retire a workspace, or enter a worktree, then translates that
-selection into the appropriate CLI command. Before retirement, the focused
+create or retire a workspace, or enter or retire a worktree, then translates
+that selection into the appropriate CLI command. Before retirement, the focused
 [`$geno-tt-workspaces-check-retirement`](skills/workspaces/check-retirement/SKILL.md)
 skill can audit Git state, worktrees, active sessions and editors, and the
 graveyard destination without moving anything. The docs above remain the

@@ -276,28 +276,47 @@ def list_workspace_paths(hostname: str, tracks: tuple[str, ...]) -> list[str]:
 
 
 def count_worktrees(hostname: str, ws_abs_paths: list[str]) -> dict:
-    """Count whole-workspace worktrees (subdirs of <ws>/.wt/) per workspace.
+    """Count managed sibling checkouts and legacy worktree groups.
 
-    Returns {ws_abs_path: count}. Missing/empty .wt -> 0. Batched into one
-    SSH call for remote hosts.
+    Returns ``{ws_abs_path: count}``. Remote hosts are batched into one SSH
+    call. A legacy ``.wt/<name>`` group counts once while each new
+    ``<repo>.worktrees/<name>`` checkout counts once.
     """
     if not ws_abs_paths:
         return {}
     if _is_local(hostname):
         out = {}
         for ws in ws_abs_paths:
-            wt = Path(ws) / ".wt"
             try:
-                out[ws] = sum(1 for d in wt.iterdir() if d.is_dir()) if wt.is_dir() else 0
+                root = Path(ws)
+                legacy = root / ".wt"
+                count = (
+                    sum(1 for path in legacy.iterdir() if path.is_dir())
+                    if legacy.is_dir()
+                    else 0
+                )
+                for container in root.glob("*.worktrees"):
+                    if container.is_dir():
+                        count += sum(
+                            1 for path in container.iterdir() if path.is_dir()
+                        )
+                out[ws] = count
             except OSError:
                 out[ws] = 0
         return out
     import shlex
     # One line per workspace: "<count> <ws>"
-    parts = [
-        f"printf '%s %s\\n' \"$(ls -1d {shlex.quote(ws)}/.wt/*/ 2>/dev/null | wc -l | tr -d ' ')\" {shlex.quote(ws)}"
-        for ws in ws_abs_paths
-    ]
+    parts = []
+    for ws in ws_abs_paths:
+        quoted = shlex.quote(ws)
+        listing = (
+            f"{{ ls -1d {quoted}/*.worktrees/*/ 2>/dev/null; "
+            f"ls -1d {quoted}/.wt/*/ 2>/dev/null; }}"
+        )
+        parts.append(
+            f"printf '%s %s\\n' \"$({listing} | wc -l | tr -d ' ')\" "
+            f"{quoted}"
+        )
     result = subprocess.run(
         ["ssh", hostname, "; ".join(parts)],
         capture_output=True, text=True, timeout=10,
@@ -381,7 +400,8 @@ def move_workspace(hostname: str, source: str, destination: str) -> None:
 def list_workspace_repos(hostname: str, ws_abs: str) -> list[str]:
     """Return git-repo subdir names directly inside a workspace (local or remote).
 
-    Skips the hidden .wt store and any non-git dirs.
+    Skips hidden metadata, legacy worktree storage, sibling worktree
+    containers, and non-Git directories.
     """
     if _is_local(hostname):
         out = []
@@ -395,103 +415,13 @@ def list_workspace_repos(hostname: str, ws_abs: str) -> list[str]:
                 out.append(d.name)
         return out
     import shlex
-    # `*/` skips dotfiles (so .wt is excluded); emit basenames of dirs with .git.
+    # `*/` skips dotfiles; sibling containers lack a .git entry at their root.
     script = (
         f'for d in {shlex.quote(ws_abs)}/*/; do '
         '[ -e "${d%/}/.git" ] && basename "${d%/}"; done'
     )
     result = _ssh_run(hostname, script)
     return [ln for ln in result.stdout.strip().splitlines() if ln]
-
-
-def list_worktrees(hostname: str, ws_abs: str) -> list[dict]:
-    """List whole-workspace worktrees under <ws>/.wt/ (local or remote).
-
-    Returns [{"name": str, "path": str, "mtime": float}], newest dir mtime.
-    """
-    if _is_local(hostname):
-        wt = Path(ws_abs) / ".wt"
-        out = []
-        if not wt.is_dir():
-            return out
-        for d in sorted(wt.iterdir()):
-            if d.is_dir():
-                try:
-                    out.append({"name": d.name, "path": str(d), "mtime": d.stat().st_mtime})
-                except OSError:
-                    out.append({"name": d.name, "path": str(d), "mtime": 0})
-        return out
-    import shlex
-    # "<mtime-epoch> <name>" per worktree dir.
-    script = (
-        f'for d in {shlex.quote(ws_abs)}/.wt/*/; do '
-        '[ -d "$d" ] && printf "%s %s\\n" "$(stat -c %Y "${d%/}")" "$(basename "${d%/}")"; '
-        'done'
-    )
-    result = _ssh_run(hostname, script)
-    out = []
-    for line in result.stdout.strip().splitlines():
-        bits = line.split(" ", 1)
-        if len(bits) == 2 and bits[0].isdigit():
-            out.append({"name": bits[1], "path": f"{ws_abs}/.wt/{bits[1]}", "mtime": float(bits[0])})
-    return out
-
-
-def add_worktree(hostname: str, ws_abs: str, name: str, repos: list[str]) -> str:
-    """Create a whole-workspace worktree: git worktree add for each repo.
-
-    Worktree branch per repo = wt/<name>. Returns the worktree root path.
-    Raises (CalledProcessError-like SystemExit message via caller) on git failure.
-    """
-    branch = f"wt/{name}"
-    wt_root = f"{ws_abs}/.wt/{name}"
-    if _is_local(hostname):
-        Path(wt_root).mkdir(parents=True, exist_ok=True)
-        for repo in repos:
-            target = Path(wt_root) / repo
-            if target.exists():
-                continue
-            subprocess.run(
-                ["git", "-C", str(Path(ws_abs) / repo), "worktree", "add", "-B", branch, str(target)],
-                check=True, capture_output=True, text=True,
-            )
-        return wt_root
-    import shlex
-    # One script: mkdir, then per-repo git worktree add (skip if target exists).
-    lines = [f"mkdir -p {shlex.quote(wt_root)}", "set -e"]
-    for repo in repos:
-        rp = shlex.quote(f"{ws_abs}/{repo}")
-        tgt = shlex.quote(f"{wt_root}/{repo}")
-        lines.append(f"[ -e {tgt} ] || git -C {rp} worktree add -B {shlex.quote(branch)} {tgt}")
-    result = _ssh_run(hostname, "\n".join(lines))
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
-    return wt_root
-
-
-def remove_worktree(hostname: str, ws_abs: str, name: str, repos: list[str]):
-    """Remove a whole-workspace worktree (git worktree remove each repo + dir)."""
-    wt_root = f"{ws_abs}/.wt/{name}"
-    if _is_local(hostname):
-        import shutil
-        for repo in repos:
-            target = Path(wt_root) / repo
-            if target.exists():
-                subprocess.run(
-                    ["git", "-C", str(Path(ws_abs) / repo), "worktree", "remove", "--force", str(target)],
-                    capture_output=True, text=True,
-                )
-        if Path(wt_root).exists():
-            shutil.rmtree(wt_root, ignore_errors=True)
-        return
-    import shlex
-    lines = []
-    for repo in repos:
-        rp = shlex.quote(f"{ws_abs}/{repo}")
-        tgt = shlex.quote(f"{wt_root}/{repo}")
-        lines.append(f"[ -e {tgt} ] && git -C {rp} worktree remove --force {tgt}")
-    lines.append(f"rm -rf {shlex.quote(wt_root)}")
-    _ssh_run(hostname, "\n".join(lines))
 
 
 def _repos_cache_path(host: str) -> Path:
