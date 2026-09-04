@@ -5,3 +5,6 @@ build/
 dist/
 *.egg-info/
 .wt-*/
+.build/
+.swiftpm/
+.DS_Store

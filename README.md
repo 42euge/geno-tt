@@ -43,6 +43,10 @@ pipx inject geno-tt iterm2   # iTerm2 orchestration
 pipx inject geno-tt textual  # interactive tmux TUI
 ```
 
+An early native macOS menu bar app lives in
+[`macos/GenoTTMenuBar`](macos/GenoTTMenuBar/README.md). It can be built and run
+independently with Swift Package Manager.
+
 The geno-tools and plugin installers add the interactive shell layer at session
 start. It lets `tt` change the current shell directory and adds iTerm2 CWD/color
 hooks. The standalone binary still works without that layer, but commands that
