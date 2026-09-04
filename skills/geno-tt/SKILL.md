@@ -7,7 +7,7 @@ description: >-
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
-  version: "0.8.1"
+  version: "0.9.0"
 ---
 
 # Open a TT workspace
@@ -69,10 +69,12 @@ commands that need `--repo`.
   preview. Only after explicit confirmation, append `--yes`. Never add
   `--discard` unless the user explicitly authorizes losing the reported
   uncommitted files.
-- Retire a workspace: resolve the exact workspace with
-  `tt -H <host> inv --expand`, show the user what will move, and ask for
-  explicit confirmation. Only then run
-  `tt -H <host> retire <workspace> --yes`.
+- Retire a workspace: first follow
+  `$geno-tt-workspaces-check-retirement` and stop unless it reports `SAFE`.
+  Resolve the exact workspace with `tt -H <host> inv --expand`, show the user
+  what will move, and ask for explicit confirmation. Only then run
+  `tt -H <host> retire <workspace> --yes`. When the audit identifies a mirror,
+  add `--mirror` so TT refuses to operate unless provenance is proven.
 - Dispatch current work: create a self-contained Markdown handoff, select an
   explicit configured host, then run
   `tt dispatch <host> --name <slug> --context-file <handoff.md>`.
@@ -85,8 +87,10 @@ the new repo ID with `tt -H <host> repos --all` when needed.
 
 Retirement moves the workspace to
 `~/code/graveyard/<track>/<domain>/<workspace>.<born>` and refuses to overwrite
-an existing entry. Never infer confirmation, and report the destination printed
-by TT.
+an existing entry. For a mirror, TT first archives its complete current state,
+copies the ZIP to `~/.geno/tt/backups/mirrors/` on the host that created the
+mirror, and verifies SHA-256 before moving anything. Never infer confirmation,
+and report both the backup and graveyard destinations printed by TT.
 
 Creating or opening a canonical workspace reconciles its configured workspace
 schema. When the user explicitly asks to audit or repair workspace files, run

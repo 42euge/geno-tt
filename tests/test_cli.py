@@ -124,6 +124,7 @@ def test_mirror_rsyncs_an_explicit_local_workspace_without_registry_lookup(
     monkeypatch, tmp_path,
 ):
     calls = []
+    mirror_records = []
     source = tmp_path / "code/explore/geno/geno-dev.2026.q3"
     source.mkdir(parents=True)
     (source / "dirty-untracked.txt").write_text("mirror this exact state\n")
@@ -141,6 +142,10 @@ def test_mirror_rsyncs_an_explicit_local_workspace_without_registry_lookup(
     monkeypatch.setattr(
         "geno_tt.cli._reconcile_workspace",
         lambda hostname, workspace, **kwargs: calls.append((hostname, workspace, kwargs)),
+    )
+    monkeypatch.setattr(
+        "geno_tt.cli.register_mirror",
+        lambda hostname, **kwargs: mirror_records.append((hostname, kwargs)),
     )
     transfers = []
 
@@ -167,6 +172,18 @@ def test_mirror_rsyncs_an_explicit_local_workspace_without_registry_lookup(
         "build.example.com",
         "/home/dev/code/explore/geno/geno-dev.2026.q3",
         {"fix": True},
+    )]
+    assert mirror_records == [(
+        "build.example.com",
+        {
+            "target_alias": "build",
+            "target_home": "/home/dev",
+            "target_workspace": "/home/dev/code/explore/geno/geno-dev.2026.q3",
+            "source_alias": "local",
+            "source_hostname": "localhost",
+            "source_home": str(tmp_path),
+            "source_workspace": str(source),
+        },
     )]
 
 

@@ -26,6 +26,7 @@ Important modules:
 - `geno_tt/cli.py` — command dispatch and high-level workflows
 - `geno_tt/dispatch.py` — portable Git-state capsules and dispatch/recall state
 - `geno_tt/remote.py` and `geno_tt/tree.py` — SSH/tmux and inventory logic
+- `geno_tt/mirror.py` — mirror provenance and verified retirement backups
 - `geno_tt/workspace_registry.py` and `geno_tt/workspace_overlay.py` —
   host-owned workspace state and canonical workspace files
 - `geno_tt/iterm_api.py` and `geno_tt/iterm2.py` — iTerm2 orchestration and

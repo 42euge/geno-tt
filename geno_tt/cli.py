@@ -13,6 +13,12 @@ from pathlib import Path, PurePosixPath
 from . import worktrees
 from .config import load_config, resolve_host, SESSIONS_DIR
 from .dispatch import list_dispatches, recall_dispatch, start_dispatch
+from .mirror import (
+    backup_mirrored_workspace,
+    delete_mirror_record,
+    load_mirror_record,
+    register_mirror,
+)
 from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_paths, list_workspace_repos, discover_owner_repos, clone_repos, move_workspace, sync_workspace, spawn_layout, LOCAL_HOSTNAME
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
@@ -838,6 +844,63 @@ def _detect_workspace() -> str | None:
     return match.root if match else None
 
 
+def _infer_legacy_local_mirror(
+    config: dict,
+    *,
+    target_alias: str,
+    target_hostname: str,
+    target_home: str,
+    target_workspace: str,
+) -> dict | None:
+    """Recognize mirrors created before destination provenance was recorded.
+
+    The current mirror command only supports a local source.  The editor has
+    always defined a mirror as the same stable workspace ID on another host,
+    so an existing local workspace at the same home-relative path is enough to
+    recover that provenance for a one-time safe retirement.
+    """
+    if target_hostname == LOCAL_HOSTNAME:
+        return None
+    local_alias = next(
+        (
+            name
+            for name, configured_hostname in config.get("hosts", {}).items()
+            if configured_hostname == LOCAL_HOSTNAME
+        ),
+        None,
+    )
+    if local_alias is None:
+        return None
+    try:
+        relative = PurePosixPath(target_workspace).relative_to(
+            PurePosixPath(target_home)
+        )
+    except ValueError:
+        return None
+    local_home = get_remote_home(LOCAL_HOSTNAME)
+    local_workspace = Path(local_home, *relative.parts)
+    if not local_workspace.is_dir():
+        return None
+    match = _schema().match_workspace(str(local_workspace))
+    if match is None or match.root != str(local_workspace):
+        return None
+    return {
+        "schema_version": 1,
+        "source": {
+            "alias": local_alias,
+            "hostname": LOCAL_HOSTNAME,
+            "home": local_home,
+            "workspace": str(local_workspace),
+        },
+        "target": {
+            "alias": target_alias,
+            "hostname": target_hostname,
+            "home": target_home,
+            "workspace": target_workspace,
+        },
+    }
+
+
 def _emit_cd(path: str):
     """cd the parent shell into path via the wrapper's exec file, if present."""
     exec_file = os.environ.get("TT_EXEC_FILE")
@@ -893,15 +956,60 @@ def cmd_retire(args, config):
     else:
         workspace, label = _resolve_workspace(hostname, target, config)
 
-    destination = _graveyard_destination(get_remote_home(hostname), workspace)
-    if not getattr(args, "yes", False):
+    target_home = get_remote_home(hostname)
+    destination = _graveyard_destination(target_home, workspace)
+    mirror = load_mirror_record(
+        hostname,
+        workspace,
+        target_home=target_home,
+    )
+    if mirror is None:
+        mirror = _infer_legacy_local_mirror(
+            config,
+            target_alias=alias,
+            target_hostname=hostname,
+            target_home=target_home,
+            target_workspace=workspace,
+        )
+    if getattr(args, "mirror", False) and mirror is None:
         raise SystemExit(
-            f"Retiring {alias}:{label} moves it to {destination}. "
-            "Re-run with --yes after confirming the workspace is finished."
+            f"Refusing to retire {alias}:{label}: it is not a recorded mirror."
+        )
+    if not getattr(args, "yes", False):
+        message = f"Retiring {alias}:{label} moves it to {destination}."
+        if mirror:
+            origin = mirror["source"]["alias"]
+            message += f" It first creates and verifies a ZIP backup on {origin}."
+        raise SystemExit(
+            f"{message} Re-run with --yes after confirming the workspace is finished."
         )
 
+    backup = None
+    if mirror:
+        print(
+            f"Backing up mirror {alias}:{label} to "
+            f"{mirror['source']['alias']} before retirement..."
+        )
+        backup = backup_mirrored_workspace(
+            hostname,
+            workspace,
+            mirror,
+            target_alias=alias,
+        )
     move_workspace(hostname, workspace, destination)
+    if mirror:
+        try:
+            delete_mirror_record(
+                hostname,
+                workspace,
+                target_home=target_home,
+            )
+        except RuntimeError as exc:
+            print(f"warning: {exc}", file=sys.stderr)
     list_repos(hostname, config=config)
+    if backup:
+        print(f"Backed up mirror to {mirror['source']['alias']}:")
+        print(f"  {backup}")
     print(f"Retired {alias}:{label}")
     print(f"  {destination}")
 
@@ -2666,6 +2774,16 @@ def cmd_mirror(args, config):
     print(f"Mirroring workspace state: {src_alias}:{label} → {target}:{rel}")
     sync_workspace(ws_abs, target_host, tgt_abs)
     _reconcile_workspace(target_host, tgt_abs, fix=True)
+    register_mirror(
+        target_host,
+        target_alias=target,
+        target_home=tgt_home,
+        target_workspace=tgt_abs,
+        source_alias=src_alias,
+        source_hostname=src_host,
+        source_home=src_home,
+        source_workspace=ws_abs,
+    )
     print(f"  done → {target}:{tgt_abs}")
 
 
@@ -2876,7 +2994,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt ls [-t TRACK] [-d DOMAIN] [--expand]")
         print("                       List all workspaces (tt inv is an alias)")
         print("  tt new-project <track>.<domain>.<workspace>")
-        print("  tt retire <workspace> --yes")
+        print("  tt retire <workspace> [--mirror] --yes")
         print("  tt workspaces check [--fix] [--registered]")
         print("  tt wt new|ls|cd|retire <name> [-r REPO] [-w WORKSPACE]")
         print("  tt wt fanout <N> <prompt…>")
@@ -3036,6 +3154,11 @@ def main(argv: list[str] | None = None) -> int:
     elif cmd == "retire":
         rp = argparse.ArgumentParser(prog="tt retire", add_help=False)
         rp.add_argument("workspace", nargs="?", default=None)
+        rp.add_argument(
+            "--mirror",
+            action="store_true",
+            help="require the selected workspace to be a proven mirror",
+        )
         rp.add_argument("--yes", action="store_true")
         cmd_retire(rp.parse_args(argv[1:]), config)
 

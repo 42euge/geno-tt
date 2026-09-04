@@ -40,6 +40,9 @@ provides a workspace-wide overview. Commands such as `tt mirror` and `tt spawn`
 operate on the workspace as a unit. Mirroring uses rsync to preserve the local
 workspace's current filesystem and Git state on another host; dispatch then
 adds a task handoff and an isolated remote worktree on top of that host copy.
+The mirror host also keeps provenance for the source. Retiring that remote copy
+first returns a verified ZIP to the source host, so remote-only changes are not
+lost when the mirror moves into its graveyard.
 
 Every workspace-management path shares one overlay schema. The workspace root
 is the first VS Code folder, each top-level repository keeps its directory name
