@@ -152,9 +152,10 @@ tt mirror -w <workspace> <target-host>
 Rsync the complete local workspace into the same relative workspace path on
 another host. This transfers repository metadata, branches, dirty and untracked
 files, and ignored files without deleting files that exist only on the target.
-`.wt/` is excluded because Git worktree metadata contains source-machine paths;
-`.DS_Store` is also excluded. The source is the current local workspace when
-possible or an explicit local workspace path/name.
+Legacy `.wt/` and repository-scoped `*.worktrees/` directories are excluded
+because Git worktree metadata contains source-machine paths; `.DS_Store` is
+also excluded. The source is the current local workspace when possible or an
+explicit local workspace path/name.
 
 Each successful mirror writes destination-owned provenance under
 `~/.geno/tt/mirrors/`. The record identifies the spawning host and path so a

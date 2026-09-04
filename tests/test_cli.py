@@ -164,6 +164,7 @@ def test_mirror_rsyncs_an_explicit_local_workspace_without_registry_lookup(
         "rsync",
         "--archive",
         "--exclude", ".wt/",
+        "--exclude", "*.worktrees/",
         "--exclude", ".DS_Store",
         f"{source}/",
         "build.example.com:/home/dev/code/explore/geno/geno-dev.2026.q3/",

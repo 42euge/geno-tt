@@ -220,6 +220,43 @@ def test_start_dispatch_builds_capsule_and_launches_regular_agent(monkeypatch, t
     assert (records / "parser-fix" / "HANDOFF.md").exists()
 
 
+def test_start_dispatch_uses_repository_scoped_worktree_as_source(
+    monkeypatch,
+    tmp_path,
+):
+    canonical = tmp_path / "code" / "chore" / "geno" / "demo.2026.q3"
+    primary = _repo(canonical / "source")
+    checkout = canonical / "source.worktrees" / "review"
+    checkout.parent.mkdir()
+    _git(primary, "worktree", "add", "-qb", "wt/review", str(checkout))
+    (checkout / "tracked.txt").write_text("active worktree state\n")
+
+    records = tmp_path / "records"
+    monkeypatch.setattr(dispatch, "DISPATCHES_DIR", records)
+    monkeypatch.setattr(
+        dispatch,
+        "get_remote_home",
+        lambda _hostname: "/home/remote",
+    )
+    monkeypatch.setattr(dispatch, "_send_tree", lambda *_args: None)
+    monkeypatch.setattr(dispatch, "_host_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(dispatch, "spawn_layout", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(dispatch, "_session_status", lambda *_args: True)
+
+    manifest = start_dispatch(
+        config={"hosts": {"build": "build.example.com"}},
+        host_alias="build",
+        context="Continue work from the active repository checkout.",
+        name="worktree-review",
+        workspace=checkout,
+    )
+
+    assert manifest["source"]["workspace_view"] == str(checkout)
+    assert len(manifest["repositories"]) == 1
+    assert manifest["repositories"][0]["name"] == "source"
+    assert manifest["repositories"][0]["source_path"] == str(checkout)
+
+
 def test_dispatch_list_json_is_a_machine_readable_editor_seam(monkeypatch, capsys):
     records = [{
         "name": "parser-fix",

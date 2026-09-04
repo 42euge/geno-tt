@@ -42,6 +42,7 @@ class WorkspaceView:
     canonical: Path
     source: Path
     relative: Path
+    repository_name: str | None = None
 
 
 def _now() -> str:
@@ -113,8 +114,15 @@ def _workspace_view(start: str | Path | None = None) -> WorkspaceView:
         )
 
     rel_to_workspace = path.relative_to(canonical)
+    repository_name = None
     if len(rel_to_workspace.parts) >= 2 and rel_to_workspace.parts[0] == ".wt":
         source = canonical / ".wt" / rel_to_workspace.parts[1]
+    elif (
+        len(rel_to_workspace.parts) >= 2
+        and rel_to_workspace.parts[0].endswith(".worktrees")
+    ):
+        repository_name = rel_to_workspace.parts[0].removesuffix(".worktrees")
+        source = canonical / rel_to_workspace.parts[0] / rel_to_workspace.parts[1]
     else:
         source = canonical
 
@@ -126,17 +134,26 @@ def _workspace_view(start: str | Path | None = None) -> WorkspaceView:
         parts = canonical.parts
         code_index = max(i for i, part in enumerate(parts) if part == "code")
         relative = Path(*parts[code_index:])
-    return WorkspaceView(canonical=canonical, source=source, relative=relative)
+    return WorkspaceView(
+        canonical=canonical,
+        source=source,
+        relative=relative,
+        repository_name=repository_name,
+    )
 
 
-def _workspace_repos(view: Path) -> list[Path]:
+def _workspace_repos(view: WorkspaceView) -> list[Path]:
+    if view.repository_name:
+        if not (view.source / ".git").exists():
+            raise SystemExit(f"No Git repo found in workspace view {view.source}.")
+        return [view.source]
     repos = sorted(
         child
-        for child in view.iterdir()
+        for child in view.source.iterdir()
         if child.is_dir() and not child.name.startswith(".") and (child / ".git").exists()
     )
     if not repos:
-        raise SystemExit(f"No Git repos found in workspace view {view}.")
+        raise SystemExit(f"No Git repos found in workspace view {view.source}.")
     return repos
 
 
@@ -212,7 +229,12 @@ def _write_untracked_archive(repo: Path, paths: list[str], target: Path) -> None
                 archive.add(source, arcname=rel, recursive=False)
 
 
-def _repo_snapshot(repo: Path, target: Path) -> dict:
+def _repo_snapshot(
+    repo: Path,
+    target: Path,
+    *,
+    repository_name: str | None = None,
+) -> dict:
     target.mkdir(parents=True)
     try:
         head = _git_text(repo, "rev-parse", "HEAD")
@@ -233,7 +255,7 @@ def _repo_snapshot(repo: Path, target: Path) -> dict:
     _write_untracked_archive(repo, untracked, target / "untracked.tar")
 
     return {
-        "name": repo.name,
+        "name": repository_name or repo.name,
         "source_path": str(repo),
         "head": head,
         "branch": branch or None,
@@ -266,7 +288,7 @@ def _handoff_text(name: str, context: str, view: WorkspaceView, repos: list[dict
             f"- Source: `{view.source}`",
             f"- Remote host: `{host}`",
             f"- Source platform: `{platform.system()} {platform.machine()}`",
-            "- The remote checkout is an isolated TT whole-workspace worktree.",
+            "- The remote checkout is an isolated TT dispatch worktree.",
             "- Use Linux-native setup and commands on the remote host; do not assume macOS paths or Homebrew.",
             "- Ignored files and machine-local environments were intentionally not transported.",
             "",
@@ -413,8 +435,15 @@ def start_dispatch(
     payload.mkdir(parents=True)
 
     repo_records = []
-    for repo in _workspace_repos(view.source):
-        repo_records.append(_repo_snapshot(repo, payload / repo.name))
+    for repo in _workspace_repos(view):
+        repository_name = view.repository_name or repo.name
+        repo_records.append(
+            _repo_snapshot(
+                repo,
+                payload / repository_name,
+                repository_name=repository_name,
+            )
+        )
 
     target_home = get_remote_home(hostname)
     target_canonical = f"{target_home}/{view.relative.as_posix()}"

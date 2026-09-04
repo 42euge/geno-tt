@@ -647,9 +647,9 @@ def sync_workspace(source: str, target_hostname: str, target: str) -> None:
     """Rsync one local TT workspace into the same workspace on another host.
 
     The workspace contents, repository metadata, dirty files, untracked files,
-    and ignored files are transferred. Whole-workspace worktrees are excluded
-    because their Git metadata contains source-machine paths. Existing files
-    that exist only on the target are retained; mirroring is non-destructive.
+    and ignored files are transferred. Git worktree checkouts are excluded
+    because their metadata contains source-machine paths. Existing files that
+    exist only on the target are retained; mirroring is non-destructive.
     """
     import shlex
 
@@ -681,6 +681,7 @@ def sync_workspace(source: str, target_hostname: str, target: str) -> None:
         "rsync",
         "--archive",
         "--exclude", ".wt/",
+        "--exclude", "*.worktrees/",
         "--exclude", ".DS_Store",
         f"{source_path}/",
         destination,
