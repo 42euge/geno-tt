@@ -5,13 +5,21 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 
 from pathlib import Path, PurePosixPath
 
 from . import worktrees
 from .config import load_config, resolve_host, SESSIONS_DIR
-from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_paths, list_workspace_repos, discover_owner_repos, clone_repos, workspace_repo_remotes, move_workspace, spawn_layout, LOCAL_HOSTNAME
+from .dispatch import list_dispatches, recall_dispatch, start_dispatch
+from .mirror import (
+    backup_mirrored_workspace,
+    delete_mirror_record,
+    load_mirror_record,
+    register_mirror,
+)
+from .remote import get_sessions, attach_session, kill_session, new_session, get_remote_home, list_repos, find_repo, read_repos_cache, read_last_session, read_tab_session, scaffold_project, count_worktrees, list_workspace_paths, list_workspace_repos, discover_owner_repos, clone_repos, move_workspace, sync_workspace, spawn_layout, LOCAL_HOSTNAME
 from time import time
 from .tree import build_session_tree, render_tree, find_sessions_by_folder, find_session_by_id, read_folders_cache, _format_idle
 from .iterm2 import is_iterm2, should_use_control_mode, should_open_new_tab, emit_pre_connect_sequences
@@ -425,7 +433,7 @@ def _repos_inv(results, track_filter=None, domain_filter=None, expand=False):
                             print(f"        {_DIM}└{_RESET} {mark}")
         print()
 
-    print(f"  {_DIM}tt inv -t <track> | -d <domain> | --expand   ·   tt wt ls (in a workspace){_RESET}")
+    print(f"  {_DIM}tt ls -t <track> | -d <domain> | --expand   ·   tt wt ls (in a workspace){_RESET}")
 
 
 def _repos_plain(results):
@@ -435,6 +443,31 @@ def _repos_plain(results):
             continue
         for r in repo_list:
             print(f"{r['idx']}\t{r['group']}\t{r['leaf']}\t{r['session_count']}\t{r['age']}")
+
+
+def _workspaces_plain(results, track_filter=None, domain_filter=None):
+    """Pipe-safe workspace inventory: one tab-separated row per workspace."""
+    for alias, _hostname, repo_list in results:
+        if not repo_list:
+            continue
+
+        workspaces = {}
+        for row in repo_list:
+            if not row["track"]:
+                continue
+            if track_filter and row["track"] != track_filter:
+                continue
+            if domain_filter and row["domain"] != domain_filter:
+                continue
+            name = f"{row['workspace']}.{row['born']}" if row["born"] else row["workspace"]
+            key = (row["track"], row["domain"], name)
+            summary = workspaces.setdefault(key, {"repos": 0, "sessions": 0})
+            summary["repos"] += 1
+            summary["sessions"] += row["session_count"]
+
+        for (track, domain, name), summary in sorted(workspaces.items()):
+            print(f"{alias}\t{track}\t{domain}\t{name}\t"
+                  f"{summary['repos']}\t{summary['sessions']}")
 
 
 def _repos_pick(results, config):
@@ -710,7 +743,8 @@ def cmd_inv(args, config):
         return
     results = _repos_data(config)
     if not sys.stdout.isatty():
-        _repos_plain(results)
+        _workspaces_plain(results, track_filter=getattr(args, "track", None),
+                          domain_filter=getattr(args, "domain", None))
         return
     _repos_inv(results, track_filter=getattr(args, "track", None),
                domain_filter=getattr(args, "domain", None),
@@ -810,6 +844,63 @@ def _detect_workspace() -> str | None:
     return match.root if match else None
 
 
+def _infer_legacy_local_mirror(
+    config: dict,
+    *,
+    target_alias: str,
+    target_hostname: str,
+    target_home: str,
+    target_workspace: str,
+) -> dict | None:
+    """Recognize mirrors created before destination provenance was recorded.
+
+    The current mirror command only supports a local source.  The editor has
+    always defined a mirror as the same stable workspace ID on another host,
+    so an existing local workspace at the same home-relative path is enough to
+    recover that provenance for a one-time safe retirement.
+    """
+    if target_hostname == LOCAL_HOSTNAME:
+        return None
+    local_alias = next(
+        (
+            name
+            for name, configured_hostname in config.get("hosts", {}).items()
+            if configured_hostname == LOCAL_HOSTNAME
+        ),
+        None,
+    )
+    if local_alias is None:
+        return None
+    try:
+        relative = PurePosixPath(target_workspace).relative_to(
+            PurePosixPath(target_home)
+        )
+    except ValueError:
+        return None
+    local_home = get_remote_home(LOCAL_HOSTNAME)
+    local_workspace = Path(local_home, *relative.parts)
+    if not local_workspace.is_dir():
+        return None
+    match = _schema().match_workspace(str(local_workspace))
+    if match is None or match.root != str(local_workspace):
+        return None
+    return {
+        "schema_version": 1,
+        "source": {
+            "alias": local_alias,
+            "hostname": LOCAL_HOSTNAME,
+            "home": local_home,
+            "workspace": str(local_workspace),
+        },
+        "target": {
+            "alias": target_alias,
+            "hostname": target_hostname,
+            "home": target_home,
+            "workspace": target_workspace,
+        },
+    }
+
+
 def _emit_cd(path: str):
     """cd the parent shell into path via the wrapper's exec file, if present."""
     exec_file = os.environ.get("TT_EXEC_FILE")
@@ -831,10 +922,11 @@ def _resolve_workspace(hostname, target, config):
         match = schema.match_workspace(workspace)
         if match is None or match.root != workspace:
             continue
-        if target in (match.workspace, match.workspace_born):
+        workspace_id = f"{match.track}.{match.domain}.{match.workspace_born}"
+        if target in (match.workspace, match.workspace_born, workspace_id, match.root):
             seen[match.root] = match.workspace_born
     if not seen:
-        raise SystemExit(f"No workspace matching '{target}' on host. Try tt inv.")
+        raise SystemExit(f"No workspace matching '{target}' on host. Try tt ls.")
     if len(seen) > 1:
         opts = ", ".join(sorted(seen.values()))
         raise SystemExit(f"'{target}' is ambiguous: {opts}. Use the full <name>.<born>.")
@@ -864,15 +956,60 @@ def cmd_retire(args, config):
     else:
         workspace, label = _resolve_workspace(hostname, target, config)
 
-    destination = _graveyard_destination(get_remote_home(hostname), workspace)
-    if not getattr(args, "yes", False):
+    target_home = get_remote_home(hostname)
+    destination = _graveyard_destination(target_home, workspace)
+    mirror = load_mirror_record(
+        hostname,
+        workspace,
+        target_home=target_home,
+    )
+    if mirror is None:
+        mirror = _infer_legacy_local_mirror(
+            config,
+            target_alias=alias,
+            target_hostname=hostname,
+            target_home=target_home,
+            target_workspace=workspace,
+        )
+    if getattr(args, "mirror", False) and mirror is None:
         raise SystemExit(
-            f"Retiring {alias}:{label} moves it to {destination}. "
-            "Re-run with --yes after confirming the workspace is finished."
+            f"Refusing to retire {alias}:{label}: it is not a recorded mirror."
+        )
+    if not getattr(args, "yes", False):
+        message = f"Retiring {alias}:{label} moves it to {destination}."
+        if mirror:
+            origin = mirror["source"]["alias"]
+            message += f" It first creates and verifies a ZIP backup on {origin}."
+        raise SystemExit(
+            f"{message} Re-run with --yes after confirming the workspace is finished."
         )
 
+    backup = None
+    if mirror:
+        print(
+            f"Backing up mirror {alias}:{label} to "
+            f"{mirror['source']['alias']} before retirement..."
+        )
+        backup = backup_mirrored_workspace(
+            hostname,
+            workspace,
+            mirror,
+            target_alias=alias,
+        )
     move_workspace(hostname, workspace, destination)
+    if mirror:
+        try:
+            delete_mirror_record(
+                hostname,
+                workspace,
+                target_home=target_home,
+            )
+        except RuntimeError as exc:
+            print(f"warning: {exc}", file=sys.stderr)
     list_repos(hostname, config=config)
+    if backup:
+        print(f"Backed up mirror to {mirror['source']['alias']}:")
+        print(f"  {backup}")
     print(f"Retired {alias}:{label}")
     print(f"  {destination}")
 
@@ -1138,7 +1275,7 @@ def cmd_iterm(args, config):
             else:
                 print(f"  {_DIM}  {t['tty']:<12} {job:<12} {t['cwd']}{_RESET}")
         if unnamed_count:
-            print(f"\n{_YELLOW}{unnamed_count} unnamed tab(s) — run: tt name{_RESET}")
+            print(f"\n{_YELLOW}{unnamed_count} unnamed tab(s) — run: tt iterm name -i{_RESET}")
 
     elif action == "group":
         dry = "--dry-run" in rest
@@ -1394,6 +1531,40 @@ def _win_of_current(sessions: list[dict]) -> str | None:
     return sessions[0]["window_id"] if sessions else None
 
 
+def cmd_version():
+    """Report the running version AND where it came from.
+
+    The package version alone is ambiguous once you install from branches: three
+    branches can all say 0.7.1. What actually answers "which code am I running"
+    is the import path plus that checkout's git state, so print both.
+    """
+    from . import __version__
+
+    print(f"geno-tt {__version__}")
+
+    src = Path(__file__).resolve().parent
+    print(f"  source   {src}")
+
+    try:
+        def git(*a):
+            r = subprocess.run(["git", "-C", str(src), *a],
+                               capture_output=True, text=True, timeout=5)
+            return r.stdout.strip() if r.returncode == 0 else ""
+
+        branch = git("rev-parse", "--abbrev-ref", "HEAD")
+        sha = git("rev-parse", "--short", "HEAD")
+        if branch:
+            dirty = " +dirty" if git("status", "--porcelain") else ""
+            print(f"  branch   {branch} @ {sha}{dirty}")
+            subject = git("log", "-1", "--format=%s")
+            if subject:
+                print(f"  commit   {subject}")
+        else:
+            print("  branch   (not a git checkout)")
+    except Exception as e:
+        print(f"  branch   (unavailable: {e})")
+
+
 def cmd_ls(args, config):
     """List all tmux sessions as a tree."""
     host_alias = getattr(args, "host_alias", None)
@@ -1421,8 +1592,15 @@ def cmd_ls(args, config):
                     output = output.replace(f"{a} ({h})", f"{a} ({h}){default_mark}", 1)
                 print(output)
                 print()
-            except Exception:
-                print(f"{a} ({h}){default_mark}: unreachable\n")
+            # SystemExit is a BaseException, so `except Exception` would let
+            # get_sessions' SystemExit escape and abort the whole walk — one dead
+            # host would hide every healthy one after it alphabetically.
+            except (Exception, SystemExit) as e:
+                # Show why, not just "unreachable" — a timeout, a DNS failure and
+                # a missing tmux binary are different problems with different fixes.
+                reason = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+                reason = reason.removeprefix("SSH error: ").removeprefix("tmux error: ")
+                print(f"{a} ({h}){default_mark}: unreachable — {reason}\n")
         return
 
     if explicit_host:
@@ -1441,6 +1619,17 @@ def cmd_ls(args, config):
             return
 
     print(render_tree(sessions, alias, hostname))
+
+    # A bare `tt tmux ls` only ever shows one host, so a configured host with
+    # live sessions reads as dead — nothing on screen says it wasn't scanned.
+    # Name the others and how to see them. Suppressed when the host was asked
+    # for explicitly, since then the single-host scope is the point.
+    if not explicit_host and not host_alias:
+        others = sorted(a for a in hosts if a != alias)
+        if others:
+            print(f"\n{len(others)} other host{'s' if len(others) > 1 else ''} "
+                  f"configured ({', '.join(others)}) — not scanned. "
+                  f"Use `tt tmux ls --all` or `tt tmux ls <host>`.")
 
 
 def cmd_kill(args, config):
@@ -1481,7 +1670,8 @@ def cmd_kill(args, config):
             print(f"  Killed: {name}")
         return
 
-    raise SystemExit(f"Unknown target '{target}'. Use a session number or alpha folder ID from tt ls.")
+    raise SystemExit(
+        f"Unknown target '{target}'. Use a session number or alpha folder ID from tt tmux ls.")
 
 
 def _resolve_repo_index(idx: int, config: dict) -> tuple[str, str, str]:
@@ -1492,15 +1682,11 @@ def _resolve_repo_index(idx: int, config: dict) -> tuple[str, str, str]:
     hosts = config.get("hosts", {})
     default_alias = config.get("default_host")
 
-    def _extract(entry) -> str:
-        """Handle both old (str) and new (dict) cache formats."""
-        return entry["path"] if isinstance(entry, dict) else entry
-
     # First try default host only (matches tt repos without --all)
     if default_alias and default_alias in hosts:
-        cached = read_repos_cache(hosts[default_alias])
-        if cached and 0 <= idx < len(cached):
-            folder = _extract(cached[idx])
+        registered = list_repos(hosts[default_alias], config=config)
+        if registered and 0 <= idx < len(registered):
+            folder = registered[idx]["path"]
             leaf = folder.rsplit("/", 1)[-1]
             return hosts[default_alias], folder, leaf
 
@@ -1508,14 +1694,14 @@ def _resolve_repo_index(idx: int, config: dict) -> tuple[str, str, str]:
     global_idx = 0
     for a in sorted(hosts):
         h = hosts[a]
-        cached = read_repos_cache(h)
-        if not cached:
+        registered = list_repos(h, config=config)
+        if not registered:
             continue
-        if idx < global_idx + len(cached):
-            folder = _extract(cached[idx - global_idx])
+        if idx < global_idx + len(registered):
+            folder = registered[idx - global_idx]["path"]
             leaf = folder.rsplit("/", 1)[-1]
             return h, folder, leaf
-        global_idx += len(cached)
+        global_idx += len(registered)
 
     raise SystemExit(f"Repo index {idx} out of range. Run tt repos first.")
 
@@ -1541,7 +1727,7 @@ def cmd_new(args, config):
         remote_home = get_remote_home(hostname)
         rel_path = folder.replace(remote_home + "/", "").replace(remote_home, "~")
     else:
-        # Try alpha folder ID from tt ls cache
+        # Try alpha folder ID from tt tmux ls cache
         cached = read_folders_cache(hostname)
         if cached and target in cached:
             rel_path = cached[target]
@@ -1584,7 +1770,7 @@ def cmd_new(args, config):
 
 
 def _resolve_alpha_to_sessions(target: str, hostname: str, sessions: list[dict]) -> list[dict] | None:
-    """If target is an alpha ID from tt ls, return matching sessions."""
+    """If target is an alpha ID from tt tmux ls, return matching sessions."""
     cached = read_folders_cache(hostname)
     if not cached or target not in cached:
         return None
@@ -1695,6 +1881,9 @@ def cmd_attach(args, config):
     sub = getattr(args, "sub", None)
 
     def _do_attach(session_name: str, folder: str):
+        from .workspace_registry import WorkspaceRegistry
+
+        WorkspaceRegistry(hostname).load(refresh=True)
         local_dir = _ensure_session_dir(folder)
         cc, tab, pre = _iterm2_opts(config, alias, session_name, folder)
         attach_session(hostname, session_name, local_dir=local_dir,
@@ -1752,7 +1941,7 @@ def cmd_attach(args, config):
 
 def _resolve_folder_target(target: str, hostname: str, sessions: list[dict]) -> list[str]:
     """Resolve a clean target (alpha ID or folder name) to list of rel_paths."""
-    # Try alpha ID from tt ls cache
+    # Try alpha ID from tt tmux ls cache
     cached = read_folders_cache(hostname)
     if cached and target in cached:
         return [cached[target]]
@@ -1784,7 +1973,7 @@ def cmd_clean(args, config):
     if target:
         target_paths = _resolve_folder_target(target, hostname, sessions)
         if not target_paths:
-            raise SystemExit(f"No folder found for '{target}'. Run tt ls first.")
+            raise SystemExit(f"No folder found for '{target}'. Run tt tmux ls first.")
         groups = {p: groups[p] for p in target_paths if p in groups}
 
     to_kill = []
@@ -2466,6 +2655,28 @@ def cmd_workspaces(args, config):
         raise SystemExit(1)
 
 
+def cmd_registry(args, config):
+    """Read or refresh the registry owned by the selected host."""
+    import json
+    from .workspace_registry import WorkspaceRegistry
+
+    _, hostname = resolve_host(config)
+    registry = WorkspaceRegistry(hostname)
+    action = getattr(args, "action", "show")
+    if action == "path":
+        print(registry.display_path)
+        return
+    if action == "refresh":
+        data = registry.load(refresh=True)
+        count = len(data["workspaces"])
+        print(f"Refreshed {count} workspace(s) in {registry.display_path}")
+        return
+    if action == "show":
+        print(json.dumps(registry.load(refresh=False), indent=2))
+        return
+    raise SystemExit("Usage: tt registry [show|refresh|path]")
+
+
 def cmd_report(args, config):
     """Cross-host inventory: render the scheme tree for every configured host."""
     if not config.get("hosts"):
@@ -2513,31 +2724,66 @@ def cmd_ecosystem_clone(args, config):
 
 
 def cmd_mirror(args, config):
-    """Replicate a workspace's repos onto another configured host.
+    """Rsync a local workspace onto another configured host.
 
-    tt mirror <workspace> <host>   (source = default/-H host; target = <host>)
+    tt mirror <workspace> <host>
     """
     src_alias, src_host = resolve_host(config)
     hosts = config.get("hosts", {})
     target = args.host
     target_host = hosts.get(target, target)
-    src_ws = _detect_workspace() if not args.workspace else None
+    spec = args.workspace or args.workspace_pos
+    explicit_path = Path(spec).expanduser() if spec else None
+    if explicit_path and explicit_path.is_absolute() and explicit_path.is_dir():
+        ws_abs = str(explicit_path.resolve())
+        match = _schema().match_workspace(ws_abs)
+        if match is None or match.root != ws_abs:
+            raise SystemExit(f"Not a canonical TT workspace: {ws_abs}")
+        label = match.workspace_born
+        src_host = LOCAL_HOSTNAME
+        src_alias = next(
+            (name for name, host in hosts.items() if host == LOCAL_HOSTNAME),
+            "local",
+        )
+        src_ws = None
+    else:
+        src_ws = _detect_workspace() if not spec else None
     if src_ws:
         ws_abs, label = src_ws, Path(src_ws).name
-    else:
-        spec = args.workspace or args.workspace_pos
+        src_host = LOCAL_HOSTNAME
+        src_alias = next(
+            (name for name, host in hosts.items() if host == LOCAL_HOSTNAME),
+            "local",
+        )
+    elif not (explicit_path and explicit_path.is_absolute() and explicit_path.is_dir()):
         ws_abs, label = _resolve_workspace(src_host, spec, config)
-    remotes = workspace_repo_remotes(src_host, ws_abs)
-    if not remotes:
-        raise SystemExit(f"No repos with remotes found in {label}.")
+    if src_host != LOCAL_HOSTNAME:
+        raise SystemExit(
+            "Workspace mirroring currently requires a local source workspace."
+    )
     # same scheme-relative path on the target
     src_home = get_remote_home(src_host)
-    rel = ws_abs[len(src_home) + 1:] if ws_abs.startswith(src_home) else ws_abs
+    try:
+        rel = Path(ws_abs).relative_to(Path(src_home)).as_posix()
+    except ValueError as exc:
+        raise SystemExit(
+            f"Workspace is outside the local TT home: {ws_abs}"
+        ) from exc
     tgt_home = get_remote_home(target_host)
     tgt_abs = f"{tgt_home}/{rel}"
-    print(f"Mirroring {len(remotes)} repo(s): {src_alias}:{label} → {target}:{rel}")
-    clone_repos(target_host, tgt_abs, remotes)
+    print(f"Mirroring workspace state: {src_alias}:{label} → {target}:{rel}")
+    sync_workspace(ws_abs, target_host, tgt_abs)
     _reconcile_workspace(target_host, tgt_abs, fix=True)
+    register_mirror(
+        target_host,
+        target_alias=target,
+        target_home=tgt_home,
+        target_workspace=tgt_abs,
+        source_alias=src_alias,
+        source_hostname=src_host,
+        source_home=src_home,
+        source_workspace=ws_abs,
+    )
     print(f"  done → {target}:{tgt_abs}")
 
 
@@ -2557,14 +2803,129 @@ def cmd_spawn(args, config):
     n, m = args.agents, args.shells
     print(f"Spawning session '{session}' in {alias}:{label}  ({n} agent + {m} shell panes)")
     spawn_layout(hostname, ws_abs, session, n, m)
+    from .workspace_registry import WorkspaceRegistry
+
+    WorkspaceRegistry(hostname).load(refresh=True)
     print(f"  attach: tt {session}")
 
 
-SUBCOMMANDS = {"ls", "kill", "new", "new-project", "retire", "workspaces", "wt", "iterm", "tmux", "code", "repos", "inv",
-               "report", "ecosystem-clone", "mirror", "spawn", "clean", "recover", "tui", "hosts",
-               "default", "add-host", "profile", "theme",
-               # iterm shortcuts — promoted to top-level so 'tt focus/fork/tab/new-task/name' work directly
-               "focus", "fork", "tab", "new-task", "name"}
+def cmd_resume(args, config):
+    """Resume the live tmux session registered for a workspace.
+
+    If the refreshed host-owned registry has no session for the workspace,
+    create the standard workspace layout, refresh state, and attach to it.
+    """
+    from .workspace_registry import RegistryError, WorkspaceRegistry
+
+    alias, hostname = resolve_host(config)
+    registry = WorkspaceRegistry(hostname)
+    try:
+        workspace = registry.workspace(args.workspace, refresh=True)
+    except RegistryError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    sessions = workspace.get("state", {}).get("tmux", {}).get("sessions", [])
+    if sessions:
+        session = max(
+            sessions,
+            key=lambda item: (item.get("session_activity", 0), item["session_name"]),
+        )
+        print(
+            f"Resuming registered session '{session['session_name']}' "
+            f"in {alias}:{workspace['name']}.{workspace['born']}"
+        )
+    else:
+        session_name = f"ws-{workspace['name']}"
+        print(
+            f"No registered tmux session for {workspace['name']}.{workspace['born']}; "
+            f"creating '{session_name}'"
+        )
+        spawn_layout(hostname, workspace["path"], session_name, 1, 1)
+        try:
+            workspace = registry.workspace(args.workspace, refresh=True)
+        except RegistryError as exc:
+            raise SystemExit(str(exc)) from exc
+        sessions = workspace.get("state", {}).get("tmux", {}).get("sessions", [])
+        session = next(
+            (item for item in sessions if item["session_name"] == session_name),
+            None,
+        )
+        if session is None:
+            raise SystemExit(
+                f"Created tmux session '{session_name}', but it was not recorded in "
+                f"{registry.display_path}."
+            )
+
+    folder = f"{workspace['name']}.{workspace['born']}"
+    local_dir = _ensure_session_dir(folder)
+    cc, tab, pre = _iterm2_opts(config, alias, session["session_name"], folder)
+    attach_session(
+        hostname,
+        session["session_name"],
+        local_dir=local_dir,
+        control_mode=cc,
+        new_tab=tab,
+        iterm2_pre_lines=pre,
+    )
+
+
+_MOVED_ITERM_COMMANDS = {"focus", "fork", "tab", "new-task", "name"}
+
+
+def _parse_inventory_args(prog: str, argv: list[str]):
+    parser = argparse.ArgumentParser(prog=prog, add_help=False)
+    parser.add_argument("-t", "--track", default=None)
+    parser.add_argument("-d", "--domain", default=None)
+    parser.add_argument("--expand", "-e", action="store_true")
+    return parser.parse_args(argv)
+
+
+def _dispatch_context(args) -> str:
+    if args.prompt is not None:
+        return args.prompt
+    if args.context_file is not None:
+        if args.context_file == "-":
+            return sys.stdin.read()
+        path = Path(args.context_file).expanduser()
+        try:
+            return path.read_text()
+        except OSError as exc:
+            raise SystemExit(f"Cannot read dispatch context {path}: {exc}") from exc
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    raise SystemExit(
+        "Dispatch needs a handoff: use --prompt TEXT, --context-file FILE, "
+        "or pipe Markdown on stdin."
+    )
+
+
+def cmd_dispatch(args, config):
+    """Move the current workspace view and a context handoff to another host."""
+    manifest = start_dispatch(
+        config=config,
+        host_alias=args.host,
+        context=_dispatch_context(args),
+        name=args.name,
+        workspace=args.workspace,
+        agent=args.agent,
+    )
+    alias = manifest["target"]["host_alias"]
+    print(f"Dispatched '{manifest['name']}' to {alias}.")
+    print(f"  session: {manifest['session']}")
+    print(f"  attach:  tt -H {alias} tmux {manifest['session']}")
+    print(f"  recall:  tt recall {manifest['name']} --stop")
+
+
+def cmd_recall(args, config):
+    """Recall a completed dispatch into its unchanged originating worktree."""
+    manifest = recall_dispatch(config=config, name=args.name, stop=args.stop)
+    print(f"Recalled '{manifest['name']}' into {manifest['source']['workspace_view']}.")
+    if manifest.get("backup_stashes"):
+        names = ", ".join(manifest["backup_stashes"])
+        print(f"  safety stash retained in: {names}")
+    return_file = manifest.get("return_file")
+    if return_file:
+        print(f"  context: {return_file}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2623,16 +2984,35 @@ def main(argv: list[str] | None = None) -> int:
 
     cmd = argv[0]
 
+    if cmd in ("-V", "--version", "version"):
+        cmd_version()
+        return
+
     if cmd in ("-h", "--help"):
         print("tt — terminal + workspace orchestration\n")
+        print("workspace:")
+        print("  tt ls [-t TRACK] [-d DOMAIN] [--expand]")
+        print("                       List all workspaces (tt inv is an alias)")
+        print("  tt new-project <track>.<domain>.<workspace>")
+        print("  tt retire <workspace> [--mirror] --yes")
+        print("  tt workspaces check [--fix] [--registered]")
+        print("  tt wt new|ls|cd|retire <name> [-r REPO] [-w WORKSPACE]")
+        print("  tt wt fanout <N> <prompt…>")
+        print("  tt repos [--all]")
+        print("  tt code <repo|workspace> [--theme THEME] [--tag repo=tag]")
+        print("  tt code --sync        Register all open VS Code windows")
+        print("  tt code --list-open   Refresh and show open VS Code workspaces")
+        print("  tt registry [show|refresh|path]")
+        print("  tt report [--all-hosts]")
+        print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
+        print("  tt mirror <workspace> <host>")
+        print("  tt dispatch <host> --context-file FILE [--name NAME]")
+        print("  tt dispatch list [--json]  Show local dispatch records")
+        print("  tt recall <name> [--stop]")
+        print("")
         print("iTerm (local):")
-        print("  tt ls                List iTerm2 tabs (dot-notation managed tabs)")
-        print("  tt focus <node>      Raise the tab matching a dot-notation node")
-        print("  tt fork [--node N] [--new]  Split a pane + open Claude in the new half")
-        print("  tt new-task <name>   New iTerm2 window + Claude orchestrator")
-        print("  tt tab <name> [--claude]    Add a dot-named tab (fan-out)")
         print("  tt iterm ls|group|sort|name|window|resume|reg|focus|fork|new-task|tab")
-        print("                       Full iTerm2 namespace (Python API)")
+        print("                       iTerm2 orchestration (Python API)")
         print("")
         print("tmux (remote):")
         print("  tt tmux ls [--all]   List remote tmux sessions")
@@ -2642,22 +3022,8 @@ def main(argv: list[str] | None = None) -> int:
         print("  tt tmux recover      Reattach to live sessions")
         print("  tt tmux tui [s]      Interactive TUI session manager")
         print("  tt tmux spawn <ws> [--agents N] [--shells M]")
+        print("  tt tmux resume <ws>  Resume the session stored in the workspace registry")
         print("  tt <target> [sub]    (shorthand attach — still works)")
-        print("")
-        print("workspace:")
-        print("  tt inv [-t TRACK] [-d DOMAIN] [--expand]")
-        print("  tt new-project <track>.<domain>.<workspace>")
-        print("  tt retire <workspace> --yes")
-        print("  tt workspaces check [--fix] [--registered]")
-        print("  tt wt new|ls|cd|retire <name> [-r REPO] [-w WORKSPACE]")
-        print("  tt wt fanout <N> <prompt…>")
-        print("  tt repos [--all]")
-        print("  tt code <repo|workspace> [--theme THEME] [--tag repo=tag]")
-        print("  tt code --sync        Register all open VS Code windows")
-        print("  tt code --list-open   Refresh and show open VS Code workspaces")
-        print("  tt report [--all-hosts]")
-        print("  tt ecosystem-clone <owner> <domain> [--track T] [--prefix P]")
-        print("  tt mirror <workspace> <host>")
         print("")
         print("hosts / appearance:")
         print("  tt hosts  tt add-host  tt default  tt profile  tt theme")
@@ -2666,12 +3032,10 @@ def main(argv: list[str] | None = None) -> int:
         return
 
     if cmd == "ls":
-        # tt ls — show iTerm tabs (local) by default; tt tmux ls for remote sessions
-        iargs = argparse.Namespace(action="ls", name=None, rest=argv[1:])
-        cmd_iterm(iargs, config)
+        cmd_inv(_parse_inventory_args("tt ls", argv[1:]), config)
 
     elif cmd == "tmux":
-        # tt tmux [sub] — explicit remote tmux namespace; routes to old tt ls/attach/kill/etc.
+        # tt tmux [sub] — explicit remote tmux namespace.
         sub = argv[1] if len(argv) > 1 else "ls"
         if sub == "ls":
             parser = argparse.ArgumentParser(prog="tt tmux ls")
@@ -2698,36 +3062,17 @@ def main(argv: list[str] | None = None) -> int:
             sp.add_argument("--agents", type=int, default=1)
             sp.add_argument("--shells", type=int, default=1)
             cmd_spawn(sp.parse_args(argv[2:]), config)
+        elif sub in ("resume",):
+            if len(argv) < 3:
+                raise SystemExit("Usage: tt tmux resume <workspace>")
+            cmd_resume(argparse.Namespace(workspace=argv[2]), config)
         else:
             # bare 'tt tmux <target>' — attach
             cmd_attach(argparse.Namespace(target=sub, sub=argv[2] if len(argv) > 2 else None,
                                           host=None, tab=False, cc=None), config)
 
-    elif cmd == "focus":
-        iargs = argparse.Namespace(action="focus", name=argv[1] if len(argv) > 1 else None,
-                                   rest=argv[2:])
-        cmd_iterm(iargs, config)
-
-    elif cmd == "fork":
-        iargs = argparse.Namespace(action="fork", name=argv[1] if len(argv) > 1 else None,
-                                   rest=argv[1:])
-        cmd_iterm(iargs, config)
-
-    elif cmd == "new-task":
-        iargs = argparse.Namespace(action="new-task", name=argv[1] if len(argv) > 1 else None,
-                                   rest=argv[2:])
-        cmd_iterm(iargs, config)
-
-    elif cmd == "tab":
-        iargs = argparse.Namespace(action="tab", name=argv[1] if len(argv) > 1 else None,
-                                   rest=argv[2:])
-        cmd_iterm(iargs, config)
-
-    elif cmd == "name":
-        # tt name [-i] [tty|sel] [dotname]  — shortcut for tt iterm name
-        iargs = argparse.Namespace(action="name", name=argv[1] if len(argv) > 1 else None,
-                                   rest=argv[2:])
-        cmd_iterm(iargs, config)
+    elif cmd in _MOVED_ITERM_COMMANDS:
+        raise SystemExit(f"'tt {cmd}' moved to 'tt iterm {cmd}'.")
 
     elif cmd == "repos":
         rp = argparse.ArgumentParser(prog="tt repos", add_help=False)
@@ -2740,12 +3085,7 @@ def main(argv: list[str] | None = None) -> int:
         cmd_repos(rargs, config)
 
     elif cmd == "inv":
-        ip = argparse.ArgumentParser(prog="tt inv", add_help=False)
-        ip.add_argument("-t", "--track", default=None)
-        ip.add_argument("-d", "--domain", default=None)
-        ip.add_argument("--expand", "-e", action="store_true")
-        iargs = ip.parse_args(argv[1:])
-        cmd_inv(iargs, config)
+        cmd_inv(_parse_inventory_args("tt inv", argv[1:]), config)
 
     elif cmd == "report":
         rp = argparse.ArgumentParser(prog="tt report", add_help=False)
@@ -2775,6 +3115,37 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--shells", type=int, default=1)
         cmd_spawn(sp.parse_args(argv[1:]), config)
 
+    elif cmd == "dispatch":
+        if len(argv) > 1 and argv[1] == "list":
+            records = list_dispatches()
+            unknown = [arg for arg in argv[2:] if arg != "--json"]
+            if unknown:
+                raise SystemExit(f"Unknown dispatch list option: {unknown[0]}")
+            if "--json" in argv[2:]:
+                print(json.dumps(records, indent=2, sort_keys=True))
+                return 0
+            if not records:
+                print("No dispatches.")
+            for record in records:
+                alias = record.get("target", {}).get("host_alias", "?")
+                print(f"{record.get('name', '?')}\t{record.get('status', '?')}\t{alias}")
+            return 0
+        dp = argparse.ArgumentParser(prog="tt dispatch")
+        dp.add_argument("host")
+        dp.add_argument("--name", default=None)
+        dp.add_argument("-w", "--workspace", default=None)
+        context_group = dp.add_mutually_exclusive_group()
+        context_group.add_argument("--context-file", default=None)
+        context_group.add_argument("--prompt", default=None)
+        dp.add_argument("--agent", default="claude")
+        cmd_dispatch(dp.parse_args(argv[1:]), config)
+
+    elif cmd == "recall":
+        rp = argparse.ArgumentParser(prog="tt recall")
+        rp.add_argument("name")
+        rp.add_argument("--stop", action="store_true")
+        cmd_recall(rp.parse_args(argv[1:]), config)
+
     elif cmd == "new-project":
         if len(argv) < 2:
             raise SystemExit("Usage: tt new-project <track>.<domain>.<workspace>")
@@ -2783,6 +3154,11 @@ def main(argv: list[str] | None = None) -> int:
     elif cmd == "retire":
         rp = argparse.ArgumentParser(prog="tt retire", add_help=False)
         rp.add_argument("workspace", nargs="?", default=None)
+        rp.add_argument(
+            "--mirror",
+            action="store_true",
+            help="require the selected workspace to be a proven mirror",
+        )
         rp.add_argument("--yes", action="store_true")
         cmd_retire(rp.parse_args(argv[1:]), config)
 
@@ -2853,6 +3229,10 @@ def main(argv: list[str] | None = None) -> int:
                 "[--tag repo=tag] | tt code --list-open | tt code --sync"
             )
         cmd_code(cargs, config)
+
+    elif cmd == "registry":
+        action = argv[1] if len(argv) > 1 else "show"
+        cmd_registry(argparse.Namespace(action=action), config)
 
     elif cmd == "tui":
         from .tui import run_tui

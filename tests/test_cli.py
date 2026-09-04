@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from geno_tt import cli
 from geno_tt.cli import (
     _parse_rel,
     _parse_workspace_spec,
@@ -17,12 +18,15 @@ from geno_tt.cli import (
     _installed_vscode_themes,
     _prepare_code_workspace,
     _registered_local_workspaces,
+    _workspaces_plain,
     cmd_code,
     cmd_ecosystem_clone,
     cmd_mirror,
     cmd_scaffold,
     cmd_workspaces,
     main,
+    cmd_registry,
+    cmd_resume,
 )
 
 
@@ -116,35 +120,71 @@ def test_ecosystem_clone_reconciles_after_cloning(monkeypatch):
     )]
 
 
-def test_mirror_reconciles_the_target_after_cloning(monkeypatch):
+def test_mirror_rsyncs_an_explicit_local_workspace_without_registry_lookup(
+    monkeypatch, tmp_path,
+):
     calls = []
-    source = "/Users/dev/code/explore/geno/docs.2026.q3"
+    mirror_records = []
+    source = tmp_path / "code/explore/geno/geno-dev.2026.q3"
+    source.mkdir(parents=True)
+    (source / "dirty-untracked.txt").write_text("mirror this exact state\n")
     monkeypatch.setattr(
         "geno_tt.cli.resolve_host", lambda config: ("local", "localhost"),
     )
-    monkeypatch.setattr("geno_tt.cli._detect_workspace", lambda: source)
     monkeypatch.setattr(
-        "geno_tt.cli.workspace_repo_remotes",
-        lambda hostname, workspace: {"geno-tt": "https://example.test/geno-tt.git"},
+        "geno_tt.cli._resolve_workspace",
+        lambda *args: pytest.fail("explicit local paths must not use registry lookup"),
     )
     monkeypatch.setattr(
         "geno_tt.cli.get_remote_home",
-        lambda hostname: "/Users/dev" if hostname == "localhost" else "/home/dev",
+        lambda hostname: str(tmp_path) if hostname == "localhost" else "/home/dev",
     )
-    monkeypatch.setattr("geno_tt.cli.clone_repos", lambda *args: [])
     monkeypatch.setattr(
         "geno_tt.cli._reconcile_workspace",
         lambda hostname, workspace, **kwargs: calls.append((hostname, workspace, kwargs)),
     )
+    monkeypatch.setattr(
+        "geno_tt.cli.register_mirror",
+        lambda hostname, **kwargs: mirror_records.append((hostname, kwargs)),
+    )
+    transfers = []
+
+    def run(argv, **kwargs):
+        transfers.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("geno_tt.remote.subprocess.run", run)
 
     cmd_mirror(SimpleNamespace(
-        host="build", workspace=None, workspace_pos=None,
+        host="build", workspace=str(source), workspace_pos=None,
     ), {"hosts": {"build": "build.example.com"}})
 
+    assert transfers[0][0][0:2] == ["ssh", "build.example.com"]
+    assert transfers[1][0] == [
+        "rsync",
+        "--archive",
+        "--exclude", ".wt/",
+        "--exclude", "*.worktrees/",
+        "--exclude", ".DS_Store",
+        f"{source}/",
+        "build.example.com:/home/dev/code/explore/geno/geno-dev.2026.q3/",
+    ]
     assert calls == [(
         "build.example.com",
-        "/home/dev/code/explore/geno/docs.2026.q3",
+        "/home/dev/code/explore/geno/geno-dev.2026.q3",
         {"fix": True},
+    )]
+    assert mirror_records == [(
+        "build.example.com",
+        {
+            "target_alias": "build",
+            "target_home": "/home/dev",
+            "target_workspace": "/home/dev/code/explore/geno/geno-dev.2026.q3",
+            "source_alias": "local",
+            "source_hostname": "localhost",
+            "source_home": str(tmp_path),
+            "source_workspace": str(source),
+        },
     )]
 
 
@@ -231,6 +271,64 @@ def test_registered_workspace_fix_repairs_through_same_seam(monkeypatch, capsys)
     output = capsys.readouterr().out
     assert "FIXED" in output
     assert "repaired 1" in output
+def test_ls_routes_to_workspace_inventory(monkeypatch):
+    called = []
+    monkeypatch.setattr(cli, "load_config", lambda: {"hosts": {}})
+    monkeypatch.setattr(cli, "_detect_session_context", lambda: None)
+    monkeypatch.setattr(cli, "cmd_inv", lambda args, config: called.append((args, config)))
+    monkeypatch.setattr(cli, "cmd_iterm", lambda *_: pytest.fail("ls routed to iTerm"))
+
+    assert cli.main(["ls", "--track", "crit", "--expand"]) == 0
+    args, config = called[0]
+    assert (args.track, args.domain, args.expand) == ("crit", None, True)
+    assert config == {"hosts": {}}
+
+
+def test_inv_remains_workspace_inventory_alias(monkeypatch):
+    called = []
+    monkeypatch.setattr(cli, "load_config", lambda: {"hosts": {}})
+    monkeypatch.setattr(cli, "_detect_session_context", lambda: None)
+    monkeypatch.setattr(cli, "cmd_inv", lambda args, _config: called.append(args))
+
+    assert cli.main(["inv", "--domain", "geno"]) == 0
+    assert called[0].domain == "geno"
+
+
+def test_iterm_commands_stay_under_iterm_namespace(monkeypatch):
+    called = []
+    monkeypatch.setattr(cli, "load_config", lambda: {"hosts": {}})
+    monkeypatch.setattr(cli, "_detect_session_context", lambda: None)
+    monkeypatch.setattr(cli, "cmd_iterm", lambda args, _config: called.append(args))
+
+    assert cli.main(["iterm", "focus", "geno.tt"]) == 0
+    assert (called[0].action, called[0].name) == ("focus", "geno.tt")
+
+
+@pytest.mark.parametrize("command", ["focus", "fork", "tab", "new-task", "name"])
+def test_iterm_shortcuts_require_iterm_namespace(monkeypatch, command):
+    monkeypatch.setattr(cli, "load_config", lambda: {"hosts": {}})
+    monkeypatch.setattr(cli, "_detect_session_context", lambda: None)
+    monkeypatch.setattr(cli, "cmd_iterm", lambda *_: pytest.fail("top-level shortcut survived"))
+
+    with pytest.raises(SystemExit, match=rf"tt iterm {command}"):
+        cli.main([command])
+
+
+def test_workspace_plain_lists_one_row_per_workspace(capsys):
+    rows = [
+        {"track": "crit", "domain": "geno", "workspace": "tt", "born": "2026.q3",
+         "session_count": 1},
+        {"track": "crit", "domain": "geno", "workspace": "tt", "born": "2026.q3",
+         "session_count": 0},
+        {"track": "side", "domain": "misc", "workspace": "dotfiles", "born": "2025.q4",
+         "session_count": 0},
+        {"track": "", "domain": "", "workspace": "legacy", "born": "",
+         "session_count": 0},
+    ]
+
+    _workspaces_plain([("local", "localhost", rows)], track_filter="crit")
+
+    assert capsys.readouterr().out == "local\tcrit\tgeno\ttt.2026.q3\t2\t1\n"
 
 
 def test_workspaces_command_routes_check_options(monkeypatch):
@@ -481,3 +579,281 @@ def test_code_list_open_refreshes_and_shows_live_registry(monkeypatch, capsys):
     assert "geno.geno-tt" in output
     assert "geno.geno-dev" in output
     assert "[23]" in output
+def test_write_json_is_readable_and_newline_terminated(tmp_path):
+    from geno_tt.config import write_json
+    p = tmp_path / "cache.json"
+    write_json(p, [{"path": "/a", "last_accessed": "unknown"}])
+    text = p.read_text()
+    assert text.endswith("\n")
+    assert text.count("\n") > 1, "single-line dump — indent lost"
+    import json
+    assert json.loads(text) == [{"path": "/a", "last_accessed": "unknown"}]
+
+
+def test_write_json_sort_keys_opt_in(tmp_path):
+    from geno_tt.config import write_json
+    import json
+    obj = {"z": 1, "a": 2}
+    unsorted, sorted_ = tmp_path / "u.json", tmp_path / "s.json"
+    write_json(unsorted, obj)
+    write_json(sorted_, obj, sort_keys=True)
+    assert list(json.loads(unsorted.read_text())) == ["z", "a"]
+    assert list(json.loads(sorted_.read_text())) == ["a", "z"]
+
+
+def test_no_bare_json_dump_in_cache_writers():
+    """Cache/state writers must go through write_json, not bare json.dump."""
+    import pathlib
+    pkg = pathlib.Path(__file__).resolve().parent.parent / "geno_tt"
+    offenders = [
+        f"{f.name}:{i}"
+        for f in pkg.glob("*.py")
+        for i, line in enumerate(f.read_text().splitlines(), 1)
+        if "json.dump(" in line  # json.dumps( is fine — it takes explicit indent
+    ]
+    assert not offenders, f"bare json.dump found: {offenders}"
+
+
+def test_single_line_cache_still_parses(tmp_path):
+    """Existing one-line caches stay readable; formatting is backward-compatible."""
+    import json
+    from geno_tt.config import write_json
+    p = tmp_path / "legacy.json"
+    p.write_text(json.dumps({"0": {"folder": "x"}}))  # old bare-dump shape
+    data = json.loads(p.read_text())
+    write_json(p, data, sort_keys=True)
+    assert json.loads(p.read_text()) == {"0": {"folder": "x"}}
+# --- tt tmux ls host visibility ---
+
+def _ls_cfg(**kw):
+    cfg = {"hosts": {"local": "localhost", "z2": "somehost"}, "default_host": "local"}
+    cfg.update(kw)
+    return cfg
+
+
+def _run_ls(monkeypatch, capsys, cfg, **ns):
+    """Run cmd_ls with the network stubbed out."""
+    import argparse
+    from geno_tt import cli
+    monkeypatch.setattr(cli, "get_sessions", lambda h, **k: [])
+    monkeypatch.setattr(cli, "get_remote_home", lambda h: "/home/u")
+    monkeypatch.setattr(cli, "build_session_tree", lambda s, home: s)
+    monkeypatch.setattr(cli, "render_tree", lambda s, a, h: f"{a} ({h})\n  (no sessions)")
+    args = argparse.Namespace(host_alias=None, host=None, folder_filter=None, all=False)
+    for k, v in ns.items():
+        setattr(args, k, v)
+    cli.cmd_ls(args, cfg)
+    return capsys.readouterr().out
+
+
+def test_ls_footer_names_unscanned_hosts(monkeypatch, capsys):
+    """A bare `tt tmux ls` must not let a configured host look dead."""
+    out = _run_ls(monkeypatch, capsys, _ls_cfg())
+    assert "z2" in out and "not scanned" in out
+    assert "--all" in out
+
+
+def test_ls_no_footer_when_host_explicit(monkeypatch, capsys):
+    """Asking for one host means the single-host scope is intentional."""
+    out = _run_ls(monkeypatch, capsys, _ls_cfg(), host_alias="local")
+    assert "not scanned" not in out
+
+
+def test_ls_no_footer_when_only_one_host(monkeypatch, capsys):
+    cfg = {"hosts": {"local": "localhost"}, "default_host": "local"}
+    out = _run_ls(monkeypatch, capsys, cfg)
+    assert "not scanned" not in out
+
+
+def test_ls_all_reports_cause_and_keeps_going(monkeypatch, capsys):
+    """One unreachable host must not hide the healthy ones, and must say why.
+
+    get_sessions raises SystemExit, which is a BaseException — `except Exception`
+    would let it abort the whole walk.
+    """
+    import argparse
+    from geno_tt import cli
+
+    def fake_get_sessions(h, **k):
+        if h == "deadhost":
+            raise SystemExit("SSH error: Could not resolve hostname deadhost")
+        return []
+
+    monkeypatch.setattr(cli, "get_sessions", fake_get_sessions)
+    monkeypatch.setattr(cli, "get_remote_home", lambda h: "/home/u")
+    monkeypatch.setattr(cli, "build_session_tree", lambda s, home: s)
+    monkeypatch.setattr(cli, "render_tree", lambda s, a, h: f"{a} ({h})\n  (no sessions)")
+
+    cfg = {"hosts": {"aaa_dead": "deadhost", "zzz_live": "localhost"}, "default_host": "zzz_live"}
+    cli.cmd_ls(argparse.Namespace(
+        host_alias=None, host=None, folder_filter=None, all=True), cfg)
+    out = capsys.readouterr().out
+
+    assert "Could not resolve hostname deadhost" in out, "cause was swallowed"
+    assert "zzz_live" in out, "dead host aborted the walk before the live one"
+def test_default_repo_dirs_cover_scheme_and_legacy_depth():
+    from geno_tt.remote import DEFAULT_REPO_DIRS
+    # scheme: code/<track>/<domain>/<workspace>.<born>/<repo> == 4 levels
+    scheme = [d for d in DEFAULT_REPO_DIRS if d.startswith("~/code/")]
+    assert scheme, "no scheme-depth pattern in DEFAULT_REPO_DIRS"
+    assert all(len(p.strip("/").split("/")[2:]) == 4 for p in scheme)
+    # legacy color folders stay covered
+    assert any(d.startswith("~/code-") for d in DEFAULT_REPO_DIRS)
+
+
+def test_default_repo_dirs_glob_matches_this_repo(tmp_path, monkeypatch):
+    import glob as _glob
+    from geno_tt.remote import DEFAULT_REPO_DIRS
+    home = tmp_path
+    (home / "code/crit/ngrt/deploy.2026.q2/main").mkdir(parents=True)
+    (home / "code-blue/legacy-repo").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    found = set()
+    for pattern in DEFAULT_REPO_DIRS:
+        import os
+        found |= {p.rstrip("/") for p in _glob.glob(os.path.expanduser(pattern))}
+    assert str(home / "code/crit/ngrt/deploy.2026.q2/main") in found
+    assert str(home / "code-blue/legacy-repo") in found
+
+def test_registry_refresh_targets_the_selected_host(monkeypatch, capsys):
+    calls = []
+
+    class FakeRegistry:
+        display_path = "build.example.com:~/.geno/tt/workspaces.json"
+
+        def __init__(self, hostname):
+            calls.append(("host", hostname))
+
+        def load(self, *, refresh):
+            calls.append(("load", refresh))
+            return {"workspaces": [{}, {}]}
+
+    monkeypatch.setattr(
+        "geno_tt.workspace_registry.WorkspaceRegistry",
+        FakeRegistry,
+    )
+    config = {
+        "default_host": "build",
+        "hosts": {"build": "build.example.com"},
+    }
+
+    cmd_registry(argparse.Namespace(action="refresh"), config)
+
+    assert calls == [("host", "build.example.com"), ("load", True)]
+    assert capsys.readouterr().out == (
+        "Refreshed 2 workspace(s) in "
+        "build.example.com:~/.geno/tt/workspaces.json\n"
+    )
+
+
+def test_resume_attaches_the_most_recent_registered_tmux_session(monkeypatch):
+    calls = []
+    workspace = {
+        "id": "explore.geno.voice.2026.q3",
+        "name": "voice",
+        "born": "2026.q3",
+        "path": "/home/dev/code/explore/geno/voice.2026.q3",
+        "state": {"tmux": {"sessions": [
+            {"session_name": "voice-old", "session_activity": 100},
+            {"session_name": "voice-current", "session_activity": 200},
+        ]}},
+    }
+
+    class FakeRegistry:
+        def __init__(self, hostname):
+            calls.append(("host", hostname))
+
+        def workspace(self, reference, *, refresh):
+            calls.append(("workspace", reference, refresh))
+            return workspace
+
+    monkeypatch.setattr(
+        "geno_tt.workspace_registry.WorkspaceRegistry", FakeRegistry,
+    )
+    monkeypatch.setattr(cli, "_ensure_session_dir", lambda folder: f"/state/{folder}")
+    monkeypatch.setattr(cli, "_iterm2_opts", lambda *_args: (False, False, None))
+    monkeypatch.setattr(
+        cli,
+        "spawn_layout",
+        lambda *_args: pytest.fail("registered state should be resumed"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "attach_session",
+        lambda hostname, session_name, **kwargs: calls.append(
+            ("attach", hostname, session_name, kwargs)
+        ),
+    )
+    config = {
+        "default_host": "build",
+        "hosts": {"build": "build.example.com"},
+    }
+
+    cmd_resume(
+        argparse.Namespace(workspace="explore.geno.voice.2026.q3"),
+        config,
+    )
+
+    assert calls[-1][0:3] == (
+        "attach", "build.example.com", "voice-current",
+    )
+    assert calls[-1][3]["local_dir"] == "/state/voice.2026.q3"
+
+
+def test_resume_creates_and_registers_state_when_workspace_has_none(monkeypatch):
+    calls = []
+    base = {
+        "id": "explore.geno.voice.2026.q3",
+        "name": "voice",
+        "born": "2026.q3",
+        "path": "/home/dev/code/explore/geno/voice.2026.q3",
+    }
+
+    class FakeRegistry:
+        display_path = "build.example.com:~/.geno/tt/workspaces.json"
+
+        def __init__(self, hostname):
+            calls.append(("host", hostname))
+            self.reads = 0
+
+        def workspace(self, reference, *, refresh):
+            self.reads += 1
+            calls.append(("workspace", reference, refresh))
+            sessions = [] if self.reads == 1 else [{
+                "session_name": "ws-voice",
+                "session_activity": 200,
+            }]
+            return {
+                **base,
+                "state": {"tmux": {"sessions": sessions}},
+            }
+
+    monkeypatch.setattr(
+        "geno_tt.workspace_registry.WorkspaceRegistry", FakeRegistry,
+    )
+    monkeypatch.setattr(cli, "_ensure_session_dir", lambda folder: f"/state/{folder}")
+    monkeypatch.setattr(cli, "_iterm2_opts", lambda *_args: (False, False, None))
+    monkeypatch.setattr(
+        cli,
+        "spawn_layout",
+        lambda *args: calls.append(("spawn", *args)),
+    )
+    monkeypatch.setattr(
+        cli,
+        "attach_session",
+        lambda hostname, session_name, **kwargs: calls.append(
+            ("attach", hostname, session_name, kwargs)
+        ),
+    )
+    config = {
+        "default_host": "build",
+        "hosts": {"build": "build.example.com"},
+    }
+
+    cmd_resume(
+        argparse.Namespace(workspace="explore.geno.voice.2026.q3"),
+        config,
+    )
+
+    assert ("spawn", "build.example.com", base["path"], "ws-voice", 1, 1) in calls
+    assert calls[-1][0:3] == ("attach", "build.example.com", "ws-voice")

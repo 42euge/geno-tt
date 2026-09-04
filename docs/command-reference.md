@@ -104,7 +104,7 @@ the initial repository directory uses the workspace name. Valid tracks are
 `crit`, `explore`, `chore`, and `side`.
 
 ```text
-tt retire [<workspace>] --yes
+tt retire [<workspace>] [--mirror] --yes
 ```
 
 Move a canonical workspace out of the active tree and into
@@ -113,6 +113,20 @@ omitted, a local session may use the workspace containing its current directory.
 Use global `-H HOST` for a configured remote host. The command requires `--yes`,
 refuses to overwrite an existing graveyard entry, and refreshes the active
 workspace inventory after moving it.
+
+When the selected workspace is a mirror, retirement first creates a ZIP of its
+complete current state on the mirror host, streams it back to the host that
+created the mirror, and compares SHA-256 on both sides. Only a verified backup
+allows the move. Backups are stored under
+`~/.geno/tt/backups/mirrors/<workspace>.from-<host>.<timestamp>.zip`; a failed
+archive, transfer, or checksum leaves the remote workspace active and reports
+the recovery archive when one exists. Mirrors created before provenance records
+were introduced are recognized when the same stable workspace ID and
+home-relative path still exist locally.
+
+`--mirror` is a safety assertion used by the editor and focused retirement
+workflow. It refuses to move a normal source workspace when provenance cannot
+prove that the selected target is a mirror.
 
 ```text
 tt report [--expand]
@@ -135,9 +149,17 @@ tt mirror [<workspace>] <target-host>
 tt mirror -w <workspace> <target-host>
 ```
 
-Clone every repository remote from a source workspace into the same relative
-workspace path on another host. The source is the current workspace when
-possible, otherwise it is resolved on the default or `-H` host.
+Rsync the complete local workspace into the same relative workspace path on
+another host. This transfers repository metadata, branches, dirty and untracked
+files, and ignored files without deleting files that exist only on the target.
+Legacy `.wt/` and repository-scoped `*.worktrees/` directories are excluded
+because Git worktree metadata contains source-machine paths; `.DS_Store` is
+also excluded. The source is the current local workspace when possible or an
+explicit local workspace path/name.
+
+Each successful mirror writes destination-owned provenance under
+`~/.geno/tt/mirrors/`. The record identifies the spawning host and path so a
+later remote retirement can return its verified ZIP to the correct machine.
 
 Creating, ecosystem-cloning, and mirroring a workspace all reconcile the same
 workspace overlay described below, locally or over SSH.

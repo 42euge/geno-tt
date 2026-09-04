@@ -1,12 +1,13 @@
 ---
 name: geno-tt
 description: >-
-  Use when opening, resuming, creating, or retiring a TT workspace through
-  guided user selection instead of choosing a low-level tt command.
+  Use when opening, resuming, creating, retiring, or remotely dispatching a TT
+  workspace through guided user selection instead of choosing a low-level tt
+  command.
 allowed-tools: "Bash(tt *)"
 metadata:
   author: 42euge
-  version: "0.8.1"
+  version: "0.9.0"
 ---
 
 # Open a TT workspace
@@ -31,6 +32,9 @@ Start with these choices:
 3. **Create a workspace** — scaffold a new workspace and its first repo.
 4. **Open or retire a worktree** — manage one repository's linked checkout.
 5. **Retire a workspace** — move a confirmed workspace into the graveyard.
+6. **Dispatch current work** — hand the current workspace view to a configured
+   remote host.
+7. **Manage dispatches** — inspect or safely recall previously dispatched work.
 
 If the user's request already identifies one intent, begin at the next
 unresolved selection instead of asking again.
@@ -65,10 +69,17 @@ commands that need `--repo`.
   preview. Only after explicit confirmation, append `--yes`. Never add
   `--discard` unless the user explicitly authorizes losing the reported
   uncommitted files.
-- Retire a workspace: resolve the exact workspace with
-  `tt -H <host> inv --expand`, show the user what will move, and ask for
-  explicit confirmation. Only then run
-  `tt -H <host> retire <workspace> --yes`.
+- Retire a workspace: first follow
+  `$geno-tt-workspaces-check-retirement` and stop unless it reports `SAFE`.
+  Resolve the exact workspace with `tt -H <host> inv --expand`, show the user
+  what will move, and ask for explicit confirmation. Only then run
+  `tt -H <host> retire <workspace> --yes`. When the audit identifies a mirror,
+  add `--mirror` so TT refuses to operate unless provenance is proven.
+- Dispatch current work: create a self-contained Markdown handoff, select an
+  explicit configured host, then run
+  `tt dispatch <host> --name <slug> --context-file <handoff.md>`.
+- Manage dispatches: run `tt dispatch list`; use `tt recall <slug> --stop` only
+  after the user chooses the dispatch and confirms stopping the remote session.
 
 After creating a workspace, ask whether to stop there, start a terminal
 session, or open the new repo in VS Code. Reuse the selected host and resolve
@@ -76,13 +87,33 @@ the new repo ID with `tt -H <host> repos --all` when needed.
 
 Retirement moves the workspace to
 `~/code/graveyard/<track>/<domain>/<workspace>.<born>` and refuses to overwrite
-an existing entry. Never infer confirmation, and report the destination printed
-by TT.
+an existing entry. For a mirror, TT first archives its complete current state,
+copies the ZIP to `~/.geno/tt/backups/mirrors/` on the host that created the
+mirror, and verifies SHA-256 before moving anything. Never infer confirmation,
+and report both the backup and graveyard destinations printed by TT.
 
 Creating or opening a canonical workspace reconciles its configured workspace
 schema. When the user explicitly asks to audit or repair workspace files, run
 `tt -H <host> workspaces check [--fix]`. Use `--registered` only for local
 iTerm or VS Code workspaces.
+
+## Remote dispatch safety
+
+Require an explicit configured destination host; never infer where work should
+run. Build a self-contained Markdown handoff containing the objective,
+decisions, constraints, completed work, verification, and next action. Dispatch
+with `--context-file -` when passing the handoff on stdin.
+
+`tt dispatch` transports committed, staged, unstaged, and untracked Git state
+into an isolated remote workspace view. Ignored files, credentials, virtual
+environments, and build caches remain local. It starts a normal agent session
+inside tmux; the handoff does not authorize new pushing, deployment, messaging,
+or other outward effects.
+
+Before recall, ensure the originating workspace has not drifted. Prefer normal
+recall after the remote session stops naturally. `tt recall <slug> --stop`
+terminates the remote tmux session, so require explicit confirmation. Preserve
+and report any safety stash or returned `RETURN.md` path.
 
 Workspace rules come from `~/.geno/tt/workspace-schema.yaml` with packaged
 defaults. Invalid schema input or unsafe existing files must stop before writes.

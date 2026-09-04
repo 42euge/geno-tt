@@ -11,9 +11,11 @@ remote hosts.
 
 Its main jobs are:
 
-- inventory, create, and retire workspaces in the code-org layout;
+- inventory, create, mirror, and safely retire workspaces in the code-org layout;
 - create, find, enter, and safely retire repository Git worktrees;
 - open a workspace as one VS Code window and register live editor windows;
+- dispatch committed and dirty workspace state to a remote tmux agent and
+  safely recall it;
 - organize iTerm2 tabs using dot-notation names; and
 - create, find, attach to, and clean up tmux sessions across configured hosts.
 
@@ -90,7 +92,8 @@ tt -H build spawn docs --agents 2 --shells 1
 There is one important namespace distinction:
 
 ```bash
-tt ls                 # local iTerm2 windows, tabs, panes, jobs, and CWDs
+tt ls                  # workspace inventory (`tt inv` is an alias)
+tt iterm ls            # local iTerm2 windows, tabs, panes, jobs, and CWDs
 tt tmux ls             # tmux sessions on the default host
 tt tmux ls --all       # tmux sessions on every configured host
 ```
@@ -99,14 +102,17 @@ Common workflows:
 
 ```bash
 # Workspaces and editors
-tt inv [-t TRACK] [-d DOMAIN] [--expand]
+tt ls [-t TRACK] [-d DOMAIN] [--expand]
 tt repos [--all | -g GROUP | -s TERM | -i]
 tt new-project <track>.<domain>.<workspace>[.<repo>]
-tt retire [<workspace>] --yes
+tt retire [<workspace>] [--mirror] --yes
 tt workspaces check [--fix] [--registered]
 tt code <repo|index|canonical-path> [--theme THEME] [--tag repo=tag]
 tt code --list-open
 tt code --sync
+tt dispatch <host> --context-file <handoff.md> [--name NAME]
+tt dispatch list
+tt recall <name> [--stop]
 
 # Repository worktrees
 tt wt new <name> [-r REPO]
@@ -116,10 +122,10 @@ tt wt retire <name> [--discard] --yes
 tt wt ls --retired
 
 # iTerm2
-tt name
-tt focus <dot.name>
-tt new-task <name>
-tt tab <name.aspect> --claude
+tt iterm name
+tt iterm focus <dot.name>
+tt iterm new-task <name>
+tt iterm tab <name.aspect> --claude
 tt iterm group _ --dry-run
 
 # tmux
@@ -146,9 +152,9 @@ skill. It asks the user whether to continue a session, open existing work,
 create or retire a workspace, or enter or retire a worktree, then translates
 that selection into the appropriate CLI command. Before retirement, the focused
 [`$geno-tt-workspaces-check-retirement`](skills/workspaces/check-retirement/SKILL.md)
-skill can audit Git state, worktrees, active sessions and editors, and the
-graveyard destination without moving anything. The docs above remain the
-user-facing source of truth for lower-level commands.
+skill audits Git state, repository worktrees, active surfaces, mirror
+provenance, and the graveyard destination without moving anything. The docs
+above remain the user-facing source of truth for lower-level commands.
 
 ## Development
 

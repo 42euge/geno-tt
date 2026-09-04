@@ -236,6 +236,8 @@ outside any matching workspace. Saved iTerm2 themes themselves live under
 | `~/.geno/tt/workspace-schema.yaml` | Editable workspace creation and overlay schema |
 | `~/.geno/tt/init.sh` | Interactive shell wrapper and iTerm2 CWD/color hooks |
 | `~/.geno/tt/sessions/` | Local pointers used to recover tmux sessions |
+| `~/.geno/tt/mirrors/` | Destination-owned mirror provenance used for safe retirement |
+| `~/.geno/tt/backups/mirrors/` | Verified ZIPs copied back before a mirror is retired |
 | `~/.geno/tt/cache/` | Repository discovery caches |
 | `~/.geno/tt/.tab_sessions.json` | Last tmux session associated with each terminal tab |
 | `~/.geno/tt/themes/` | Saved iTerm2 color themes |

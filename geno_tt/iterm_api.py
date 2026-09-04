@@ -3,7 +3,7 @@
 This is the only module that uses the `iterm2` PyPI package — it is imported
 lazily so the rest of geno-tt stays dependency-free. Install with:
 
-    pipx inject geno-tt iterm2        # or: pip install 'geno-tt[orchestration]'
+    <the Python path printed by tt> -m pip install iterm2
 
 and enable iTerm2 ▸ Settings ▸ General ▸ Magic ▸ "Enable Python API".
 
@@ -14,6 +14,7 @@ so windows/tabs are read and rearranged without stealing focus.
 import os
 import shlex
 import subprocess
+import sys
 
 APP_NAME = "geno-tt"
 
@@ -29,8 +30,7 @@ ORCHESTRATOR_SEED = (
 )
 _SETUP_HINT = (
     "tt iterm needs the iTerm2 Python API.\n"
-    "  1. Install the package:  pipx inject geno-tt iterm2\n"
-    "     (or:  pip install 'geno-tt[orchestration]')\n"
+    f"  1. Install it for this tt:  {shlex.quote(sys.executable)} -m pip install iterm2\n"
     "  2. Enable it:  iTerm2 ▸ Settings ▸ General ▸ Magic ▸ Enable Python API\n"
 )
 

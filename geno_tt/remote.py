@@ -6,12 +6,20 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from .config import TT_HOME
+
+from .config import TT_HOME, write_json
+from .workspace_registry import RegistryError, WorkspaceRegistry
 
 CACHE_DIR = Path("/tmp")
 CACHE_TTL = 60  # seconds
 
 LOCAL_HOSTNAME = "localhost"
+
+# Where repos live, by depth. The code-org scheme puts a repo 4 levels under
+# ~/code (<track>/<domain>/<workspace>.<born>/<repo>); the deprecated
+# color-folder layout puts it 2 levels under ~/code-<color>. Scan both so
+# `tt inv` / `tt report` see a conformant tree without hand-editing config.
+DEFAULT_REPO_DIRS = ["~/code/*/*/*/*/", "~/code-*/*/"]
 
 
 def _is_local(hostname: str) -> bool:
@@ -55,8 +63,7 @@ def _read_cache(host: str) -> list[dict] | None:
 
 
 def _write_cache(host: str, sessions: list[dict]):
-    with open(_cache_path(host), "w") as f:
-        json.dump(sessions, f)
+    write_json(_cache_path(host), sessions)
 
 
 def get_sessions(hostname: str, use_cache: bool = False) -> list[dict]:
@@ -79,8 +86,16 @@ def get_sessions(hostname: str, use_cache: bool = False) -> list[dict]:
                 return []
             raise SystemExit(f"tmux error: {result.stderr.strip()}")
     else:
+        # `tmux ... 2>/dev/null` hides tmux's own stderr, so an unreachable host and
+        # a host with no tmux server both used to land in the `return []` branch and
+        # render as "(no sessions)" — a dead host looked idle. ssh reserves 255 for
+        # its own failures (DNS, refused, auth, timeout) and passes the remote
+        # command's status through otherwise, so 255 is the signal to raise on.
         cmd = ["ssh", hostname, f'tmux list-windows -a -F "{fmt}" 2>/dev/null']
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 255:
+            err = result.stderr.strip().splitlines()
+            raise SystemExit(f"SSH error: {err[-1] if err else f'cannot reach {hostname}'}")
         if result.returncode != 0:
             if "no server running" in result.stderr or not result.stdout.strip():
                 return []
@@ -424,63 +439,25 @@ def list_workspace_repos(hostname: str, ws_abs: str) -> list[str]:
     return [ln for ln in result.stdout.strip().splitlines() if ln]
 
 
-def _repos_cache_path(host: str) -> Path:
-    cache_dir = TT_HOME / "cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / f"repos_{host}.json"
-
-
 def list_repos(hostname: str, config: dict | None = None, write_cache: bool = True) -> list[dict]:
-    """List directories under configured repo_dirs on a host (local or remote).
+    """Return repos from the owning host's freshly rebuilt registry.
 
-    By default scans ~/code*/*/ unless repo_dirs is set in config.
-    Returns list of dicts: {"path": str, "last_accessed": str (ISO timestamp or "unknown")}.
+    ``config`` and ``write_cache`` remain accepted for caller compatibility;
+    repository discovery no longer reads or writes host mirrors under the
+    local cache directory.
     """
-    repo_dirs = ["~/code*/*/"]
-    if config and "repo_dirs" in config:
-        repo_dirs = config["repo_dirs"]
-
-    if _is_local(hostname):
-        return _list_local_repos(repo_dirs, hostname, write_cache)
-
-    # Get paths and last-access times in one SSH call
-    # stat -c '%X %n' gives epoch access-time + path on Linux
-    stat_parts = [f"stat -c '%X %n' {d} 2>/dev/null" for d in repo_dirs]
-    remote_cmd = "; ".join(stat_parts)
-
-    result = subprocess.run(
-        ["ssh", hostname, remote_cmd],
-        capture_output=True, text=True, timeout=10,
-    )
-    if not result.stdout.strip():
-        return []
-
-    repos = []
-    seen = set()
-    for line in result.stdout.strip().splitlines():
-        parts = line.split(" ", 1)
-        if len(parts) == 2 and parts[0].isdigit():
-            epoch, path = int(parts[0]), parts[1].rstrip("/")
-            if path not in seen and not _is_graveyard_path(path):
-                seen.add(path)
-                from datetime import datetime, timezone
-                ts = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
-                repos.append({"path": path, "last_accessed": ts})
-        else:
-            path = line.strip().rstrip("/")
-            if path and path not in seen and not _is_graveyard_path(path):
-                seen.add(path)
-                repos.append({"path": path, "last_accessed": "unknown"})
-
-    repos.sort(key=lambda r: r["path"])
-    if write_cache:
-        with open(_repos_cache_path(hostname), "w") as f:
-            json.dump(repos, f)
-    return repos
+    try:
+        return WorkspaceRegistry(hostname).repos(refresh=True)
+    except RegistryError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
-def _list_local_repos(repo_dirs: list[str], hostname: str, write_cache: bool) -> list[dict]:
-    """List local repos using Python glob + os.stat (avoids platform-specific stat flags)."""
+def _list_local_repos(
+    repo_dirs: list[str],
+    hostname: str,
+    write_cache: bool,
+) -> list[dict]:
+    """List local repos for compatibility with schema and retirement checks."""
     import glob as _glob
     from datetime import datetime, timezone
 
@@ -489,18 +466,21 @@ def _list_local_repos(repo_dirs: list[str], hostname: str, write_cache: bool) ->
     for pattern in repo_dirs:
         for path in sorted(_glob.glob(os.path.expanduser(pattern))):
             path = path.rstrip("/")
-            if path not in seen and not _is_graveyard_path(path):
-                seen.add(path)
-                try:
-                    ts = datetime.fromtimestamp(os.stat(path).st_atime, tz=timezone.utc).isoformat()
-                except OSError:
-                    ts = "unknown"
-                repos.append({"path": path, "last_accessed": ts})
+            if path in seen or _is_graveyard_path(path):
+                continue
+            seen.add(path)
+            try:
+                timestamp = datetime.fromtimestamp(
+                    os.stat(path).st_atime,
+                    tz=timezone.utc,
+                ).isoformat()
+            except OSError:
+                timestamp = "unknown"
+            repos.append({"path": path, "last_accessed": timestamp})
 
-    repos.sort(key=lambda r: r["path"])
+    repos.sort(key=lambda repo: repo["path"])
     if write_cache:
-        with open(_repos_cache_path(hostname), "w") as f:
-            json.dump(repos, f)
+        write_json(_repos_cache_path(hostname), repos)
     return repos
 
 
@@ -511,16 +491,11 @@ def _is_graveyard_path(path: str) -> bool:
 
 
 def read_repos_cache(hostname: str) -> list[dict] | None:
-    """Read repos cache. No TTL — indices stay stable until tt repos is re-run."""
-    path = _repos_cache_path(hostname)
-    if not path.exists():
+    """Compatibility shim: read the owning host registry, never a local mirror."""
+    try:
+        return WorkspaceRegistry(hostname).repos(refresh=False)
+    except RegistryError:
         return None
-    with open(path) as f:
-        data = json.load(f)
-    # Migration: handle old cache format (list of strings)
-    if data and isinstance(data[0], str):
-        return [{"path": p, "last_accessed": "unknown"} for p in data]
-    return data
 
 
 def _last_session_path(folder_name: str) -> Path:
@@ -531,9 +506,7 @@ def save_last_session(folder_name: str, hostname: str, session_name: str):
     """Save last-attached session info for recovery."""
     path = _last_session_path(folder_name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    import json as _json
-    with open(path, "w") as f:
-        _json.dump({"hostname": hostname, "session_name": session_name}, f)
+    write_json(path, {"hostname": hostname, "session_name": session_name}, sort_keys=True)
 
 
 def read_last_session(folder_name: str) -> dict | None:
@@ -577,8 +550,7 @@ def save_tab_session(hostname: str, session_name: str, folder_name: str):
         with open(path) as f:
             data = json.load(f)
     data[tid] = {"hostname": hostname, "session_name": session_name, "folder": folder_name}
-    with open(path, "w") as f:
-        json.dump(data, f)
+    write_json(path, data, sort_keys=True)
 
 
 def read_tab_session() -> dict | None:
@@ -669,6 +641,64 @@ def clone_repos(hostname: str, ws_abs: str, urls: dict) -> list[tuple]:
     lines.append(f'ls -d {shlex.quote(ws_abs)}/*/ 2>/dev/null | wc -l')
     res = _ssh_run(hostname, "\n".join(lines))
     return [(n, "remote") for n in urls]
+
+
+def sync_workspace(source: str, target_hostname: str, target: str) -> None:
+    """Rsync one local TT workspace into the same workspace on another host.
+
+    The workspace contents, repository metadata, dirty files, untracked files,
+    and ignored files are transferred. Git worktree checkouts are excluded
+    because their metadata contains source-machine paths. Existing files that
+    exist only on the target are retained; mirroring is non-destructive.
+    """
+    import shlex
+
+    source_path = Path(source).expanduser().resolve()
+    if not source_path.is_dir():
+        raise RuntimeError(f"Workspace does not exist: {source_path}")
+
+    target_path = target.rstrip("/")
+    if _is_local(target_hostname):
+        destination_path = Path(target_path).expanduser().resolve()
+        if destination_path == source_path:
+            raise RuntimeError("Mirror source and destination are the same workspace.")
+        destination_path.mkdir(parents=True, exist_ok=True)
+        destination = f"{destination_path}/"
+    else:
+        mkdir = _ssh_run(
+            target_hostname,
+            f"mkdir -p -- {shlex.quote(target_path)}",
+        )
+        if mkdir.returncode != 0:
+            detail = mkdir.stderr.strip() or mkdir.stdout.strip()
+            raise RuntimeError(
+                f"Could not create remote workspace {target_hostname}:{target_path}: "
+                f"{detail or f'ssh exited with {mkdir.returncode}'}"
+            )
+        destination = f"{target_hostname}:{target_path}/"
+
+    command = [
+        "rsync",
+        "--archive",
+        "--exclude", ".wt/",
+        "--exclude", "*.worktrees/",
+        "--exclude", ".DS_Store",
+        f"{source_path}/",
+        destination,
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "rsync is required to mirror a workspace. Install rsync locally "
+            "and on the destination host."
+        ) from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(
+            f"Could not mirror workspace with rsync: "
+            f"{detail or f'rsync exited with {result.returncode}'}"
+        )
 
 
 def workspace_repo_remotes(hostname: str, ws_abs: str) -> dict:
