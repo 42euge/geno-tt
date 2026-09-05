@@ -19,6 +19,7 @@ from geno_tt.cli import (
     _prepare_code_workspace,
     _registered_local_workspaces,
     _workspaces_plain,
+    _ws_abs_path,
     cmd_code,
     cmd_ecosystem_clone,
     cmd_mirror,
@@ -34,6 +35,19 @@ def test_parse_rel_scheme():
     f = _parse_rel("code/crit/ngrt/deploy-split.2026.q2/main")
     assert (f["track"], f["domain"], f["workspace"], f["born"], f["repo"]) == (
         "crit", "ngrt", "deploy-split", "2026.q2", "main")
+
+
+def test_parse_rel_keeps_a_nested_repository_path():
+    path = "code/crit/ngrt/deploy-split.2026.q2/services/main"
+
+    fields = _parse_rel(path)
+
+    assert fields["workspace_born"] == "deploy-split.2026.q2"
+    assert fields["repo"] == "services/main"
+    assert fields["leaf"] == "ngrt/deploy-split.2026.q2/services/main"
+    assert _ws_abs_path({"path": f"/Users/dev/{path}"}) == (
+        "/Users/dev/code/crit/ngrt/deploy-split.2026.q2"
+    )
 
 
 def test_parse_rel_legacy():

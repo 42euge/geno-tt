@@ -85,7 +85,11 @@ def test_packaged_schema_is_valid_and_matches_the_default_layout():
         "workspace_born": "demo.2026.q3",
         "born": "2026.q3",
         "repo": "sample-api",
+        "repository_path": "sample-api",
     }
+    assert schema.match_repo_relative(
+        "code/crit/acme/demo.2026.q3/services/sample-api"
+    )["repository_path"] == "services/sample-api"
 
 
 def test_custom_schema_controls_creation_layout_and_overlay(tmp_path):
@@ -197,12 +201,15 @@ def test_invalid_schema_is_rejected_before_use(tmp_path):
         load_workspace_schema(path)
 
 
-def test_repository_layout_must_remain_top_level(tmp_path):
+def test_repository_layout_may_put_repositories_in_a_folder(tmp_path):
     path = tmp_path / "workspace-schema.yaml"
     path.write_text(CUSTOM_SCHEMA.replace(
         'repository: "src-{repo}"',
         'repository: "repos/{repo}"',
     ))
 
-    with pytest.raises(WorkspaceSchemaError, match="top-level"):
-        load_workspace_schema(path)
+    schema = load_workspace_schema(path)
+
+    assert schema.repository_relative("api") == "repos/api"
+    assert schema.repository_from_relative("repos/api") == "api"
+    assert schema.repository_from_relative("services/repos/api") == "api"

@@ -41,14 +41,15 @@ Important modules:
 The packaged workspace schema defaults to:
 
 ```text
-~/code/<track>/<domain>/<workspace>.<born>/<repo>
+~/code/<track>/<domain>/<workspace>.<born>/<repo-path>
 ```
 
 - Tracks default to `crit`, `explore`, `chore`, and `side` and are editable in
   the workspace schema.
 - `born` is the quarter when the workspace started and never changes.
-- A workspace contains one or more top-level Git repositories whose directory
-  template comes from the workspace schema.
+- A workspace contains one or more Git repositories, optionally organized in
+  non-hidden grouping folders. Repository identity is the path relative to the
+  workspace; the checkout leaf shape comes from the workspace schema.
 - Every workspace-management mutation reconciles the workspace overlay through
   `geno_tt.workspace_overlay.reconcile_workspace`; do not duplicate its folder,
   naming, tag, theme, or generated-context rules in callers.
@@ -60,8 +61,9 @@ The packaged workspace schema defaults to:
   relative `CLAUDE.md -> AGENTS.md` symlink. Never replace unmanaged instruction
   files or conflicting links during reconciliation.
 - Managed worktrees live beside their primary repository at
-  `<workspace>/<repo>.worktrees/<name>` and use branch `wt/<name>`. Worktree
-  mutations target one repository; `tt wt ls` is the workspace-wide overview.
+  `<workspace>/<grouping-path>/<repo>.worktrees/<name>` and use branch
+  `wt/<name>`. Worktree mutations target one repository; `tt wt ls` is the
+  workspace-wide overview.
 - Worktree retirement preserves the branch, blocks dirty checkouts unless
   `--discard --yes` is explicit, and appends history below `<workspace>/.tt/`.
 - Hosts come from `~/.geno/tt/config.toml`; never hard-code environment host

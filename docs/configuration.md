@@ -60,25 +60,25 @@ repo_dirs = ["~/code/*/*/*/*/", "~/code-*/*/"]
 ```
 
 Each value is a shell-style directory glob evaluated on the selected host.
-Patterns must resolve to repository directories, not workspace or track
-directories.
+Each match is a repository candidate. If it is not itself a Git repository,
+TT descends through its non-hidden directories and returns the Git repositories
+inside it. This lets the canonical pattern match grouping folders such as
+`services/` without adding a glob for every grouping depth.
 
 The canonical layout needs four wildcard levels below `~/code`:
 
 ```text
 ~/code/*/*/*/*/
-       track/domain/workspace/repo
+       track/domain/workspace/repo-or-group
 ```
 
-The current built-in fallback is:
+The built-in default is:
 
 ```toml
-repo_dirs = ["~/code*/*/"]
+repo_dirs = ["~/code/*/*/*/*/", "~/code-*/*/"]
 ```
 
-That finds legacy `~/code-<color>/<repo>` checkouts but is too shallow for the
-canonical layout. Configure `repo_dirs` explicitly when using `tt inv`,
-`tt repos`, target indices, or workspace-name resolution.
+The second pattern preserves legacy `~/code-<color>/<repo>` discovery.
 
 Repository caches are refreshed by inventory operations and stored under
 `~/.geno/tt/cache/`.
@@ -143,9 +143,11 @@ directory templates, `.code-workspace` naming and folder entries, the tag
 separator, VS Code theme fallback order, and generated agent instructions.
 By default `AGENTS.md` is canonical and `CLAUDE.md` is a relative symlink to
 it, so agent-neutral and Claude-specific discovery read identical content.
-The repository template may add a prefix or suffix, such as
-`src-{repo}`. It must remain one top-level directory so mirror operations and
-repository worktree sibling paths keep the same repository model.
+The repository template may add a prefix or suffix, such as `src-{repo}`, or a
+safe relative folder, such as `repos/{repo}`. Existing repositories may also be
+organized below additional non-hidden grouping folders. Mirror operations
+preserve those workspace-relative paths, and managed worktree containers stay
+beside their selected primary repository.
 
 `tt` validates the complete schema before creating or repairing anything.
 Templates reject unknown or missing fields, paths must stay relative, and
@@ -162,8 +164,8 @@ for manual resolution and never overwritten.
 
 Changing layout templates affects future creation and discovery. It does not
 move existing workspace or repository directories. If `layout.workspace`
-changes the repository directory's depth beneath `~/code`, update `repo_dirs`
-above so inventory can discover the new paths.
+changes the candidate depth beneath `~/code`, update `repo_dirs` above so
+inventory can discover the new paths.
 
 ## iTerm2 attach behavior
 

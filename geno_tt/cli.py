@@ -76,9 +76,10 @@ _RESET = "\033[0m"
 _BOLD = "\033[1m"
 _DIM = "\033[2m"
 
-# Scheme: ~/code/<track>/<domain>/<workspace>.<born>/<repo>
-# A workspace holds 1..N repos. Managed worktrees live in sibling
-# <repo>.worktrees/<name> containers and are discovered through Git.
+# Scheme: ~/code/<track>/<domain>/<workspace>.<born>/<repo-path>
+# A workspace holds 1..N repos, optionally below grouping folders. Managed
+# worktrees live in sibling <repo>.worktrees/<name> containers and are
+# discovered through Git.
 # Each track maps to an ANSI code (reusing _COLOR_CODES values).
 _TRACK_COLORS = {
     "crit": _COLOR_CODES["red"],
@@ -111,11 +112,11 @@ def _parse_rel(rel: str) -> dict:
         domain = fields["domain"]
         workspace = fields["workspace"]
         born = fields["born"]
-        repo = fields["repo"]
+        repo = fields.get("repository_path", fields["repo"])
         ws_seg = fields["workspace_born"]
         return {
             "track": track, "domain": domain, "workspace": workspace,
-            "born": born, "repo": repo,
+            "workspace_born": ws_seg, "born": born, "repo": repo,
             "group": track,
             "leaf": f"{domain}/{ws_seg}/{repo}",
         }
@@ -359,8 +360,8 @@ def _repos_search(results, pattern):
 
 def _ws_abs_path(repo_row) -> str:
     """Absolute path of the workspace container holding a repo row."""
-    # repo_row['path'] = .../code/<track>/<domain>/<ws>.<born>/<repo>
-    return repo_row["path"].rsplit("/", 1)[0]
+    match = _schema().match_workspace(repo_row["path"])
+    return match.root if match else repo_row["path"].rsplit("/", 1)[0]
 
 
 def _repos_inv(results, track_filter=None, domain_filter=None, expand=False):
@@ -369,7 +370,8 @@ def _repos_inv(results, track_filter=None, domain_filter=None, expand=False):
     Only renders new-scheme repos (those with a track). Legacy code-<color>
     repos are skipped here — use `tt repos` for those during transition.
     Worktrees stay collapsed: shown only as a count unless expand=True (then
-    repo names are listed; worktree names come from `tt wt ls`).
+    workspace-relative repo paths are listed; worktree names come from
+    `tt wt ls`).
     """
     from collections import OrderedDict
 

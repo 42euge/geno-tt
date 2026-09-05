@@ -5,8 +5,8 @@ Git worktrees, iTerm2 tabs, VS Code windows, and tmux sessions on local or
 remote hosts.
 
 ```text
-~/code/<track>/<domain>/<workspace>.<born>/<repo>
-       crit        api        billing.2026.q3    service
+~/code/<track>/<domain>/<workspace>.<born>/<repo-path>
+       crit        api        billing.2026.q3    services/api
 ```
 
 Its main jobs are:
@@ -69,6 +69,9 @@ repo_dirs = ["~/code/*/*/*/*/", "~/code-*/*/"]
 [hosts]
 local = "localhost"
 ```
+
+The canonical pattern may match either repositories or grouping folders; TT
+descends through non-hidden folders to find nested Git repositories.
 
 Then create and use a workspace:
 
